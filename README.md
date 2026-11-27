@@ -74,7 +74,8 @@ src/
 └── gree/
     ├── crypto.rs      # AES-128-ECB & AES-128-GCM encryption + lenient Base64 decoding
     ├── protocol.rs    # Gree JSON envelopes, enums, and status parsing
-    └── client.rs      # Broadcast/unicast discovery, bind fallback, status, and commands
+    ├── client.rs      # Broadcast/unicast discovery, bind fallback, status, and commands
+    └── storage.rs     # Local JSON cache (~/.config/gree-remote-app/devices.json)
 ```
 
 ## Getting Started
@@ -127,10 +128,10 @@ cargo run -- --scan
 
 ## Roadmap
 
-- Persist last connected devices and binding keys locally for instant startup
 - Support Fahrenheit (`TemUn` / `TemRec`) display and control
 - System tray integration and quick toggle menu
 - Device schedule / timer management (`setT`)
+- Cross-platform release packaging (`.exe`, `.dmg`, Arch `PKGBUILD` / `AppImage`)
 
 ## Contributing
 
