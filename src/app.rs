@@ -470,33 +470,32 @@ impl eframe::App for GreeRemoteApp {
                         return;
                     };
 
-                    // 1. Hero Thermostat Card (Circular Dial + Power Pill)
+                    // 1. Compact Split 2-Column Hero Card (Mini-Dial + Power / Ambient / Stepper)
                     theme::card_frame().show(ui, |ui| {
                         ui.set_min_width(ui.available_width());
                         let prev_temp = st.set_temp;
-                        if let Some(new_temp) = widgets::thermostat_dial(
+                        let (new_temp, power_toggled) = widgets::compact_thermostat_hero(
                             ui,
                             &mut st.set_temp,
                             st.current_temp,
                             st.power,
                             accent,
                             !self.busy,
-                        ) {
+                        );
+                        if let Some(t) = new_temp {
                             self.status = Some(st.clone());
-                            self.send_cmd(vec![("TemUn", 0), ("SetTem", new_temp)]);
+                            self.send_cmd(vec![("TemUn", 0), ("SetTem", t)]);
                         } else if st.set_temp != prev_temp {
                             self.status = Some(st.clone());
                         }
-
-                        ui.add_space(4.0);
-                        if widgets::power_pill_button(ui, st.power, !self.busy) {
+                        if power_toggled {
                             st.power = !st.power;
                             self.status = Some(st.clone());
                             self.send_cmd(vec![("Pow", i64::from(st.power))]);
                         }
                     });
 
-                    ui.add_space(10.0);
+                    ui.add_space(8.0);
 
                     // 2. Mode Segmented Pill Card
                     theme::card_frame().show(ui, |ui| {

@@ -55,8 +55,8 @@ pub fn header_icon_button(
     enabled && resp.clicked()
 }
 
-fn circle_step_button(ui: &mut egui::Ui, icon: Icon, enabled: bool) -> bool {
-    let size = vec2(42.0, 42.0);
+fn step_pill_button(ui: &mut egui::Ui, icon: Icon, width: f32, enabled: bool) -> bool {
+    let size = vec2(width, 34.0);
     let sense = if enabled { Sense::click() } else { Sense::hover() };
     let (rect, resp) = ui.allocate_exact_size(size, sense);
 
@@ -77,54 +77,46 @@ fn circle_step_button(ui: &mut egui::Ui, icon: Icon, enabled: bool) -> bool {
         };
 
         let painter = ui.painter();
-        painter.circle_filled(rect.center(), 20.0, bg);
-        painter.circle_stroke(rect.center(), 20.0, Stroke::new(1.0_f32, BORDER));
-        draw_icon(painter, rect.center(), 8.5, icon, fg);
+        painter.rect_filled(rect, CornerRadius::same(10), bg);
+        painter.rect_stroke(
+            rect,
+            CornerRadius::same(10),
+            Stroke::new(1.0_f32, BORDER),
+            egui::StrokeKind::Inside,
+        );
+        draw_icon(painter, rect.center(), 7.5, icon, fg);
     }
 
     enabled && resp.clicked()
 }
 
-/// Interactive circular arc thermostat dial (16..=30 °C) flanked by `-` and `+` buttons.
-/// Returns `Some(new_temp)` when the user finishes changing the temperature.
-pub fn thermostat_dial(
+/// Compact split 2-column hero card (Option B):
+/// - Left: interactive 270° circular arc mini-dial (16..=30 °C)
+/// - Right: Power pill button, Ambient room temp readout, and `-` / `+` buttons
+/// Returns `(committed_temp, power_toggled)`.
+pub fn compact_thermostat_hero(
     ui: &mut egui::Ui,
     set_temp: &mut i64,
     room_temp: Option<i64>,
     power: bool,
     accent: Color32,
     enabled: bool,
-) -> Option<i64> {
+) -> (Option<i64>, bool) {
     let mut committed: Option<i64> = None;
+    let mut power_toggled = false;
     let dial_accent = if power { accent } else { TEXT_MUTED };
 
     ui.horizontal(|ui| {
-        let total_w = ui.available_width();
-        let content_w = 42.0 + 18.0 + 184.0 + 18.0 + 42.0;
-        let pad = ((total_w - content_w) * 0.5).max(0.0);
-        ui.add_space(pad);
-
-        // Minus button vertically centered
-        ui.vertical(|ui| {
-            ui.add_space(70.0);
-            if circle_step_button(ui, Icon::Minus, enabled && *set_temp > 16) {
-                *set_temp -= 1;
-                committed = Some(*set_temp);
-            }
-        });
-
-        ui.add_space(18.0);
-
-        // Circular arc dial
-        let dial_size = vec2(184.0, 178.0);
+        // Left column: Compact Mini-Dial
+        let dial_size = vec2(154.0, 132.0);
         let sense = if enabled {
             Sense::click_and_drag()
         } else {
             Sense::hover()
         };
         let (rect, resp) = ui.allocate_exact_size(dial_size, sense);
-        let center = pos2(rect.center().x, rect.center().y + 6.0);
-        let radius = 74.0_f32;
+        let center = pos2(rect.center().x, rect.center().y + 5.0);
+        let radius = 52.0_f32;
 
         // 270-degree sweep: from 135° (bottom-left) clockwise to 405° (bottom-right)
         let start_deg = 135.0_f32;
@@ -132,13 +124,12 @@ pub fn thermostat_dial(
         let start_rad = start_deg.to_radians();
         let sweep_rad = sweep_deg.to_radians();
 
-        // Pointer drag/click mapping to 16..=30
         if enabled && (resp.dragged() || resp.clicked()) {
             if let Some(pointer) = resp.interact_pointer_pos() {
                 let dx = pointer.x - center.x;
                 let dy = pointer.y - center.y;
                 let dist = (dx * dx + dy * dy).sqrt();
-                if dist > 28.0 {
+                if dist > 20.0 {
                     let mut deg = dy.atan2(dx).to_degrees();
                     if deg < 0.0 {
                         deg += 360.0;
@@ -179,20 +170,20 @@ pub fn thermostat_dial(
 
             // Track background
             painter.add(Shape::line(
-                arc_pts(1.0, 56),
-                Stroke::new(9.0_f32, Color32::from_rgb(35, 42, 56)),
+                arc_pts(1.0, 48),
+                Stroke::new(7.5_f32, Color32::from_rgb(35, 42, 56)),
             ));
 
             // Active glowing progress arc
             if frac > 0.001 {
-                let active_pts = arc_pts(frac, (56.0 * frac).max(8.0) as usize);
+                let active_pts = arc_pts(frac, (48.0 * frac).max(8.0) as usize);
                 if power {
                     painter.add(Shape::line(
                         active_pts.clone(),
-                        Stroke::new(15.0_f32, with_alpha(dial_accent, 42)),
+                        Stroke::new(13.0_f32, with_alpha(dial_accent, 42)),
                     ));
                 }
-                painter.add(Shape::line(active_pts, Stroke::new(9.0_f32, dial_accent)));
+                painter.add(Shape::line(active_pts, Stroke::new(7.5_f32, dial_accent)));
             }
 
             // Thumb knob
@@ -202,122 +193,129 @@ pub fn thermostat_dial(
                 center.y + radius * thumb_angle.sin(),
             );
             if power {
-                painter.circle_filled(thumb_pos, 11.0, with_alpha(dial_accent, 65));
+                painter.circle_filled(thumb_pos, 9.5, with_alpha(dial_accent, 65));
             }
-            painter.circle_filled(thumb_pos, 6.5, Color32::WHITE);
-            painter.circle_stroke(thumb_pos, 6.5, Stroke::new(2.0_f32, dial_accent));
+            painter.circle_filled(thumb_pos, 5.5, Color32::WHITE);
+            painter.circle_stroke(thumb_pos, 5.5, Stroke::new(1.8_f32, dial_accent));
 
             // Center temperature readout
             painter.text(
-                pos2(center.x, center.y - 6.0),
+                pos2(center.x, center.y + 1.0),
                 Align2::CENTER_CENTER,
                 format!("{}°C", *set_temp),
-                FontId::proportional(38.0),
+                FontId::proportional(28.0),
                 if power { TEXT_PRIMARY } else { TEXT_MUTED },
             );
 
-            // Ambient room temperature
-            let subtitle = match room_temp {
-                Some(t) => format!("Ambiente {t}°C"),
-                None => "Sin sensor".to_string(),
-            };
-            painter.text(
-                pos2(center.x, center.y + 24.0),
-                Align2::CENTER_CENTER,
-                subtitle,
-                FontId::proportional(13.0),
-                TEXT_MUTED,
-            );
-
             // Min / Max endpoint labels (16° and 30°)
-            let min_a = start_rad + 0.12;
-            let max_a = start_rad + sweep_rad - 0.12;
-            let label_r = radius + 16.0;
+            let min_a = start_rad + 0.14;
+            let max_a = start_rad + sweep_rad - 0.14;
+            let label_r = radius + 14.0;
             painter.text(
                 pos2(
-                    center.x + label_r * min_a.cos() - 4.0,
-                    center.y + label_r * min_a.sin() + 4.0,
+                    center.x + label_r * min_a.cos() - 3.0,
+                    center.y + label_r * min_a.sin() + 3.0,
                 ),
                 Align2::CENTER_CENTER,
                 "16°",
-                FontId::proportional(11.5),
+                FontId::proportional(11.0),
                 TEXT_MUTED,
             );
             painter.text(
                 pos2(
-                    center.x + label_r * max_a.cos() + 4.0,
-                    center.y + label_r * max_a.sin() + 4.0,
+                    center.x + label_r * max_a.cos() + 3.0,
+                    center.y + label_r * max_a.sin() + 3.0,
                 ),
                 Align2::CENTER_CENTER,
                 "30°",
-                FontId::proportional(11.5),
+                FontId::proportional(11.0),
                 TEXT_MUTED,
             );
             let _ = PI;
         }
 
-        ui.add_space(18.0);
+        ui.add_space(14.0);
 
-        // Plus button vertically centered
+        // Right column: Power Pill + Ambient Temp + Stepper Buttons
+        let right_w = ui.available_width().max(180.0);
         ui.vertical(|ui| {
-            ui.add_space(70.0);
-            if circle_step_button(ui, Icon::Plus, enabled && *set_temp < 30) {
-                *set_temp += 1;
-                committed = Some(*set_temp);
+            ui.set_width(right_w);
+            ui.add_space(6.0);
+
+            // Power pill button (full width of right column)
+            let p_size = vec2(right_w, 40.0);
+            let p_sense = if enabled { Sense::click() } else { Sense::hover() };
+            let (p_rect, p_resp) = ui.allocate_exact_size(p_size, p_sense);
+            if ui.is_rect_visible(p_rect) {
+                let base = if power { POWER_ON } else { POWER_OFF };
+                let fill = if !enabled {
+                    base.gamma_multiply(0.6)
+                } else if p_resp.is_pointer_button_down_on() {
+                    base.gamma_multiply(0.85)
+                } else if p_resp.hovered() {
+                    base.gamma_multiply(1.1)
+                } else {
+                    base
+                };
+
+                let painter = ui.painter();
+                if power {
+                    painter.rect_filled(
+                        p_rect.expand(1.5),
+                        CornerRadius::same(22),
+                        with_alpha(POWER_ON, 45),
+                    );
+                }
+                painter.rect_filled(p_rect, CornerRadius::same(20), fill);
+
+                let fg = Color32::WHITE;
+                let label = if power { "ENCENDIDO" } else { "APAGADO" };
+                let icon_x = p_rect.center().x - 48.0;
+                draw_icon(painter, pos2(icon_x, p_rect.center().y), 8.0, Icon::Power, fg);
+                painter.text(
+                    pos2(icon_x + 17.0, p_rect.center().y),
+                    Align2::LEFT_CENTER,
+                    label,
+                    FontId::proportional(14.0),
+                    fg,
+                );
             }
+            if enabled && p_resp.clicked() {
+                power_toggled = true;
+            }
+
+            ui.add_space(10.0);
+
+            // Ambient room temperature row
+            ui.horizontal(|ui| {
+                let amb_text = match room_temp {
+                    Some(t) => format!("Ambiente  {t}°C"),
+                    None => "Sin sensor de ambiente".to_string(),
+                };
+                ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+                    ui.label(egui::RichText::new(amb_text).size(13.5).color(TEXT_MUTED));
+                });
+            });
+
+            ui.add_space(10.0);
+
+            // Side-by-side `-` and `+` buttons
+            let btn_w = ((right_w - 10.0) * 0.5).max(60.0);
+            ui.horizontal(|ui| {
+                if step_pill_button(ui, Icon::Minus, btn_w, enabled && *set_temp > 16) {
+                    *set_temp -= 1;
+                    committed = Some(*set_temp);
+                }
+                ui.add_space(2.0);
+                if step_pill_button(ui, Icon::Plus, btn_w, enabled && *set_temp < 30) {
+                    *set_temp += 1;
+                    committed = Some(*set_temp);
+                }
+            });
         });
     });
 
-    committed
-}
-
-pub fn power_pill_button(ui: &mut egui::Ui, power: bool, enabled: bool) -> bool {
-    let mut clicked = false;
-    ui.vertical_centered(|ui| {
-        let size = vec2(176.0, 42.0);
-        let sense = if enabled { Sense::click() } else { Sense::hover() };
-        let (rect, resp) = ui.allocate_exact_size(size, sense);
-
-        if ui.is_rect_visible(rect) {
-            let base = if power { POWER_ON } else { POWER_OFF };
-            let fill = if !enabled {
-                base.gamma_multiply(0.6)
-            } else if resp.is_pointer_button_down_on() {
-                base.gamma_multiply(0.85)
-            } else if resp.hovered() {
-                base.gamma_multiply(1.1)
-            } else {
-                base
-            };
-
-            let painter = ui.painter();
-            if power {
-                painter.rect_filled(
-                    rect.expand(2.0),
-                    CornerRadius::same(23),
-                    with_alpha(POWER_ON, 45),
-                );
-            }
-            painter.rect_filled(rect, CornerRadius::same(21), fill);
-
-            let fg = Color32::WHITE;
-            let label = if power { "ENCENDIDO" } else { "APAGADO" };
-            let icon_x = rect.center().x - 48.0;
-            draw_icon(painter, pos2(icon_x, rect.center().y), 8.5, Icon::Power, fg);
-            painter.text(
-                pos2(icon_x + 18.0, rect.center().y),
-                Align2::LEFT_CENTER,
-                label,
-                FontId::proportional(14.5),
-                fg,
-            );
-        }
-
-        if enabled && resp.clicked() {
-            clicked = true;
-        }
-    });
-    clicked
+    (committed, power_toggled)
 }
 
 pub fn mode_segmented_bar(
