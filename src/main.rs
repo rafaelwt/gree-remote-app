@@ -44,8 +44,8 @@ fn main() -> eframe::Result<()> {
 
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
-            .with_inner_size([500.0, 595.0])
-            .with_min_inner_size([460.0, 540.0])
+            .with_inner_size([494.0, 750.0])
+            .with_min_inner_size([460.0, 680.0])
             .with_title("Gree Remote"),
         ..Default::default()
     };
