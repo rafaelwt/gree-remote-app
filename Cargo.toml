@@ -1,0 +1,15 @@
+[package]
+name = "gree-remote-app"
+version = "0.1.0"
+edition = "2024"
+description = "100% Rust + egui desktop remote control for Gree Smart Air Conditioners"
+
+[dependencies]
+eframe = "0.31"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+aes = "0.8"
+ecb = "0.1"
+aes-gcm = "0.10"
+base64 = "0.22"
+if-addrs = "0.13"
