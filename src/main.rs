@@ -1,5 +1,6 @@
 mod app;
 mod gree;
+mod ui;
 
 use std::net::Ipv4Addr;
 
@@ -43,8 +44,8 @@ fn main() -> eframe::Result<()> {
 
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
-            .with_inner_size([560.0, 560.0])
-            .with_min_inner_size([460.0, 480.0])
+            .with_inner_size([520.0, 720.0])
+            .with_min_inner_size([460.0, 620.0])
             .with_title("Gree Remote"),
         ..Default::default()
     };

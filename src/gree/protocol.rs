@@ -117,6 +117,7 @@ pub enum AcMode {
     Heat = 4,
 }
 
+#[allow(dead_code)]
 impl AcMode {
     pub const ALL: [AcMode; 5] = [
         AcMode::Auto,
@@ -157,6 +158,7 @@ pub enum FanSpeed {
     High = 5,
 }
 
+#[allow(dead_code)]
 impl FanSpeed {
     pub const ALL: [FanSpeed; 6] = [
         FanSpeed::Auto,

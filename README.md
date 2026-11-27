@@ -66,7 +66,11 @@ graph LR
 ```text
 src/
 ├── main.rs            # Entry point (eframe native window & --scan CLI mode)
-├── app.rs             # egui UI layout, state management, and background worker
+├── app.rs             # egui layout, state management, and background worker
+├── ui/
+│   ├── theme.rs       # Dark theme visuals and dynamic mode accent palette
+│   ├── icons.rs       # 100% vector icon library drawn with egui::Painter
+│   └── widgets.rs     # Circular thermostat dial, segmented bars, and toggle tiles
 └── gree/
     ├── crypto.rs      # AES-128-ECB & AES-128-GCM encryption + lenient Base64 decoding
     ├── protocol.rs    # Gree JSON envelopes, enums, and status parsing

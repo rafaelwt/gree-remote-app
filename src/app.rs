@@ -3,12 +3,17 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use eframe::egui;
+use eframe::egui::{self, CornerRadius, Margin, RichText, Stroke, vec2};
 
 use crate::gree::client;
 use crate::gree::protocol::{
-    AcMode, AcStatus, DeviceInfo, FanSpeed, HorizontalSwing, VerticalSwing,
+    AcMode, AcStatus, DeviceInfo, HorizontalSwing, VerticalSwing,
 };
+use crate::ui::icons::{Icon, draw_icon};
+use crate::ui::theme::{
+    self, BG_DEEP, BORDER, CARD_BG, CARD_INNER, ERROR, POWER_ON, TEXT_MUTED, TEXT_PRIMARY,
+};
+use crate::ui::widgets;
 
 enum WorkerCmd {
     Scan(Option<Ipv4Addr>),
@@ -34,6 +39,7 @@ pub struct GreeRemoteApp {
     status: Option<AcStatus>,
 
     manual_ip: String,
+    show_settings: bool,
     busy: bool,
     auto_refresh: bool,
     last_refresh: Instant,
@@ -43,6 +49,8 @@ pub struct GreeRemoteApp {
 
 impl GreeRemoteApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        theme::apply_theme(&cc.egui_ctx);
+
         let (cmd_tx, cmd_rx) = mpsc::channel::<WorkerCmd>();
         let (evt_tx, evt_rx) = mpsc::channel::<WorkerEvent>();
         let ctx = cc.egui_ctx.clone();
@@ -84,10 +92,11 @@ impl GreeRemoteApp {
             selected_idx: 0,
             status: None,
             manual_ip: String::new(),
+            show_settings: false,
             busy: true,
             auto_refresh: true,
             last_refresh: Instant::now(),
-            status_message: "Escaneando la red en busca de equipos Gree...".to_string(),
+            status_message: "Escaneando la red local...".to_string(),
             is_error: false,
         };
         let _ = app.cmd_tx.send(WorkerCmd::Scan(None));
@@ -96,6 +105,11 @@ impl GreeRemoteApp {
 
     fn selected_device(&self) -> Option<&DeviceInfo> {
         self.devices.get(self.selected_idx)
+    }
+
+    fn current_accent(&self) -> egui::Color32 {
+        let mode = self.status.as_ref().map(|s| s.mode).unwrap_or(AcMode::Cool);
+        theme::mode_accent(mode)
     }
 
     fn trigger_scan(&mut self, manual_ip: Option<Ipv4Addr>) {
@@ -138,8 +152,9 @@ impl GreeRemoteApp {
                     self.busy = false;
                     if devs.is_empty() {
                         self.is_error = true;
+                        self.show_settings = true;
                         self.status_message =
-                            "No se encontraron equipos Gree. Prueba ingresar la IP manualmente."
+                            "No se encontraron equipos Gree. Ingresa la IP manualmente."
                                 .to_string();
                     } else {
                         self.devices = devs;
@@ -161,7 +176,7 @@ impl GreeRemoteApp {
                         self.status = Some(st);
                         self.last_refresh = Instant::now();
                         self.is_error = false;
-                        self.status_message = "Estado actualizado.".to_string();
+                        self.status_message = "Conectado".to_string();
                     }
                 }
                 WorkerEvent::StatusResult(_, Err(e)) => {
@@ -171,7 +186,7 @@ impl GreeRemoteApp {
                 }
                 WorkerEvent::CommandResult(Ok(())) => {
                     self.is_error = false;
-                    self.status_message = "Comando aplicado.".to_string();
+                    self.status_message = "Comando aplicado".to_string();
                 }
                 WorkerEvent::CommandResult(Err(e)) => {
                     self.busy = false;
@@ -198,434 +213,548 @@ impl eframe::App for GreeRemoteApp {
             ctx.request_repaint_after(Duration::from_secs(2));
         }
 
-        // Top toolbar
-        egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
-            ui.add_space(4.0);
-            ui.horizontal_wrapped(|ui| {
-                ui.heading("❄ Gree Remote");
-                ui.separator();
+        let accent = self.current_accent();
 
-                if ui
-                    .add_enabled(!self.busy, egui::Button::new("🔍 Escanear red"))
-                    .clicked()
-                {
-                    self.trigger_scan(None);
-                }
-
-                ui.label("IP:");
-                let ip_resp = ui.add(
-                    egui::TextEdit::singleline(&mut self.manual_ip)
-                        .desired_width(110.0)
-                        .hint_text("192.168.1.100"),
-                );
-                let connect_clicked = ui
-                    .add_enabled(!self.busy, egui::Button::new("Conectar"))
-                    .clicked()
-                    || (ip_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
-
-                if connect_clicked {
-                    match self.manual_ip.trim().parse::<Ipv4Addr>() {
-                        Ok(ip) => self.trigger_scan(Some(ip)),
-                        Err(_) => {
-                            self.is_error = true;
-                            self.status_message = "IP inválida (ej: 192.168.1.100)".to_string();
-                        }
+        // Compact Top Header
+        egui::TopBottomPanel::top("top_header")
+            .frame(
+                egui::Frame::new()
+                    .fill(BG_DEEP)
+                    .stroke(Stroke::new(1.0_f32, BORDER))
+                    .inner_margin(Margin::symmetric(16, 12)),
+            )
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    // App vector logo
+                    let (logo_rect, _) = ui.allocate_exact_size(vec2(32.0, 32.0), egui::Sense::hover());
+                    if ui.is_rect_visible(logo_rect) {
+                        draw_icon(ui.painter(), logo_rect.center(), 13.5, Icon::Snowflake, accent);
                     }
-                }
+                    ui.add_space(4.0);
 
-                ui.separator();
-                if ui
-                    .add_enabled(
-                        !self.busy && self.selected_device().is_some(),
-                        egui::Button::new("⟳ Actualizar"),
-                    )
-                    .clicked()
-                {
-                    self.trigger_refresh();
-                }
-                ui.checkbox(&mut self.auto_refresh, "Auto (10s)");
-            });
-            ui.add_space(4.0);
-        });
-
-        // Bottom status bar
-        egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                if self.busy {
-                    ui.spinner();
-                }
-                let color = if self.is_error {
-                    egui::Color32::from_rgb(240, 100, 100)
-                } else {
-                    ui.visuals().text_color()
-                };
-                ui.colored_label(color, &self.status_message);
-            });
-        });
-
-        // Main remote control panel
-        egui::CentralPanel::default().show(ctx, |ui| {
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                if self.devices.is_empty() {
-                    ui.vertical_centered(|ui| {
-                        ui.add_space(60.0);
-                        if self.busy {
-                            ui.spinner();
-                            ui.label("Buscando aires acondicionados Gree en tu red local...");
+                    // Title + device pill
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 2.0;
+                        ui.label(
+                            RichText::new("Gree Remote")
+                                .size(17.5)
+                                .strong()
+                                .color(TEXT_PRIMARY),
+                        );
+                        if let Some(dev) = self.selected_device() {
+                            egui::Frame::new()
+                                .fill(CARD_BG)
+                                .stroke(Stroke::new(1.0_f32, BORDER))
+                                .corner_radius(CornerRadius::same(10))
+                                .inner_margin(Margin::symmetric(8, 2))
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        let (dot_rect, _) = ui.allocate_exact_size(
+                                            vec2(7.0, 7.0),
+                                            egui::Sense::hover(),
+                                        );
+                                        ui.painter().circle_filled(
+                                            dot_rect.center(),
+                                            3.2,
+                                            if dev.key.is_some() { POWER_ON } else { ERROR },
+                                        );
+                                        ui.label(
+                                            RichText::new(format!(
+                                                "{} {} · {}",
+                                                dev.brand.to_uppercase(),
+                                                dev.model_type,
+                                                dev.ip
+                                            ))
+                                            .size(11.5)
+                                            .color(TEXT_MUTED),
+                                        );
+                                    });
+                                });
                         } else {
-                            ui.label("No hay equipos conectados.");
-                            ui.label("Pulsa 'Escanear red' o ingresa la IP de tu aire arriba.");
+                            ui.label(
+                                RichText::new("Sin equipo conectado")
+                                    .size(11.5)
+                                    .color(TEXT_MUTED),
+                            );
                         }
                     });
-                    return;
-                }
 
-                // Device selector + info
-                let mut changed_device = false;
-                ui.group(|ui| {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.label("Equipo:");
-                        egui::ComboBox::from_id_salt("device_selector")
-                            .selected_text(self.devices[self.selected_idx].display_name())
-                            .show_ui(ui, |ui| {
-                                for (idx, dev) in self.devices.iter().enumerate() {
-                                    if ui
-                                        .selectable_value(
-                                            &mut self.selected_idx,
-                                            idx,
-                                            dev.display_name(),
-                                        )
-                                        .changed()
-                                    {
-                                        changed_device = true;
-                                    }
-                                }
-                            });
-
-                        let dev = &self.devices[self.selected_idx];
-                        ui.separator();
-                        ui.small(format!(
-                            "MAC: {} | {} | {}",
-                            dev.id, dev.ver, dev.encryption
-                        ));
+                    // Right action icon buttons
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if widgets::header_icon_button(
+                            ui,
+                            Icon::Settings,
+                            "Conexión manual y ajustes",
+                            true,
+                            self.show_settings,
+                            accent,
+                        ) {
+                            self.show_settings = !self.show_settings;
+                        }
+                        if widgets::header_icon_button(
+                            ui,
+                            Icon::Scan,
+                            "Escanear red local",
+                            !self.busy,
+                            false,
+                            accent,
+                        ) {
+                            self.trigger_scan(None);
+                        }
+                        if widgets::header_icon_button(
+                            ui,
+                            Icon::Refresh,
+                            "Actualizar estado",
+                            !self.busy && self.selected_device().is_some(),
+                            false,
+                            accent,
+                        ) {
+                            self.trigger_refresh();
+                        }
                     });
                 });
+            });
 
-                if changed_device {
-                    self.status = None;
-                    self.trigger_refresh();
-                }
-
-                ui.add_space(8.0);
-
-                let Some(mut st) = self.status.clone() else {
-                    ui.horizontal(|ui| {
-                        ui.spinner();
-                        ui.label("Leyendo estado del aire acondicionado...");
-                    });
-                    return;
-                };
-
-                // Power + Temperature Card
-                ui.group(|ui| {
-                    ui.set_min_width(ui.available_width());
-                    ui.horizontal(|ui| {
-                        let (btn_text, btn_color) = if st.power {
-                            ("ENCENDIDO", egui::Color32::from_rgb(34, 153, 84))
+        // Minimalist Footer Status Bar
+        egui::TopBottomPanel::bottom("footer_bar")
+            .frame(
+                egui::Frame::new()
+                    .fill(BG_DEEP)
+                    .stroke(Stroke::new(1.0_f32, BORDER))
+                    .inner_margin(Margin::symmetric(16, 7)),
+            )
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    if self.busy {
+                        ui.add(egui::Spinner::new().size(13.0));
+                    } else {
+                        let (dot_rect, _) =
+                            ui.allocate_exact_size(vec2(8.0, 8.0), egui::Sense::hover());
+                        let dot_color = if self.is_error {
+                            ERROR
+                        } else if self.selected_device().is_some() {
+                            POWER_ON
                         } else {
-                            ("APAGADO", egui::Color32::from_rgb(160, 50, 50))
+                            TEXT_MUTED
                         };
-                        let power_clicked = draw_power_button(ui, !self.busy, btn_text, btn_color);
+                        ui.painter().circle_filled(dot_rect.center(), 3.5, dot_color);
+                    }
 
-                        if power_clicked {
+                    let footer_text = if !self.is_error && !self.busy {
+                        if let Some(dev) = self.selected_device() {
+                            let auto_str = if self.auto_refresh { " · Auto 10s" } else { "" };
+                            format!(
+                                "{} · {} · {}{}",
+                                self.status_message, dev.ver, dev.encryption, auto_str
+                            )
+                        } else {
+                            self.status_message.clone()
+                        }
+                    } else {
+                        self.status_message.clone()
+                    };
+
+                    ui.label(
+                        RichText::new(footer_text)
+                            .size(12.0)
+                            .color(if self.is_error { ERROR } else { TEXT_MUTED }),
+                    );
+                });
+            });
+
+        // Main Content Area
+        egui::CentralPanel::default()
+            .frame(egui::Frame::new().fill(BG_DEEP).inner_margin(Margin::same(14)))
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    // Collapsible Settings / Manual IP Panel
+                    if self.show_settings {
+                        theme::card_frame().show(ui, |ui| {
+                            ui.set_min_width(ui.available_width());
+                            ui.horizontal_wrapped(|ui| {
+                                ui.label(RichText::new("IP manual:").color(TEXT_MUTED));
+                                let ip_resp = ui.add(
+                                    egui::TextEdit::singleline(&mut self.manual_ip)
+                                        .desired_width(120.0)
+                                        .hint_text("192.168.1.100"),
+                                );
+                                let connect = ui
+                                    .add_enabled(!self.busy, egui::Button::new("Conectar"))
+                                    .clicked()
+                                    || (ip_resp.lost_focus()
+                                        && ui.input(|i| i.key_pressed(egui::Key::Enter)));
+
+                                if connect {
+                                    match self.manual_ip.trim().parse::<Ipv4Addr>() {
+                                        Ok(ip) => self.trigger_scan(Some(ip)),
+                                        Err(_) => {
+                                            self.is_error = true;
+                                            self.status_message =
+                                                "IP inválida (ej: 192.168.1.100)".to_string();
+                                        }
+                                    }
+                                }
+
+                                ui.separator();
+                                ui.checkbox(&mut self.auto_refresh, "Auto-actualizar (10s)");
+                            });
+
+                            if self.devices.len() > 1 {
+                                ui.add_space(6.0);
+                                let mut changed = false;
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new("Equipo:").color(TEXT_MUTED));
+                                    egui::ComboBox::from_id_salt("device_selector")
+                                        .selected_text(self.devices[self.selected_idx].display_name())
+                                        .show_ui(ui, |ui| {
+                                            for (idx, dev) in self.devices.iter().enumerate() {
+                                                if ui
+                                                    .selectable_value(
+                                                        &mut self.selected_idx,
+                                                        idx,
+                                                        dev.display_name(),
+                                                    )
+                                                    .changed()
+                                                {
+                                                    changed = true;
+                                                }
+                                            }
+                                        });
+                                });
+                                if changed {
+                                    self.status = None;
+                                    self.trigger_refresh();
+                                }
+                            }
+                        });
+                        ui.add_space(10.0);
+                    }
+
+                    if self.devices.is_empty() {
+                        theme::card_frame().show(ui, |ui| {
+                            ui.set_min_width(ui.available_width());
+                            ui.vertical_centered(|ui| {
+                                ui.add_space(40.0);
+                                if self.busy {
+                                    ui.spinner();
+                                    ui.add_space(8.0);
+                                    ui.label("Buscando aires acondicionados Gree en tu red...");
+                                } else {
+                                    ui.label(
+                                        RichText::new("No hay equipos conectados")
+                                            .size(15.0)
+                                            .strong(),
+                                    );
+                                    ui.add_space(4.0);
+                                    ui.label(
+                                        RichText::new(
+                                            "Usa el botón de escaneo o ingresa la IP arriba.",
+                                        )
+                                        .color(TEXT_MUTED),
+                                    );
+                                }
+                                ui.add_space(40.0);
+                            });
+                        });
+                        return;
+                    }
+
+                    let Some(mut st) = self.status.clone() else {
+                        theme::card_frame().show(ui, |ui| {
+                            ui.set_min_width(ui.available_width());
+                            ui.horizontal(|ui| {
+                                ui.spinner();
+                                ui.label("Leyendo estado del aire acondicionado...");
+                            });
+                        });
+                        return;
+                    };
+
+                    // 1. Hero Thermostat Card (Circular Dial + Power Pill)
+                    theme::card_frame().show(ui, |ui| {
+                        ui.set_min_width(ui.available_width());
+                        let prev_temp = st.set_temp;
+                        if let Some(new_temp) = widgets::thermostat_dial(
+                            ui,
+                            &mut st.set_temp,
+                            st.current_temp,
+                            st.power,
+                            accent,
+                            !self.busy,
+                        ) {
+                            self.status = Some(st.clone());
+                            self.send_cmd(vec![("TemUn", 0), ("SetTem", new_temp)]);
+                        } else if st.set_temp != prev_temp {
+                            self.status = Some(st.clone());
+                        }
+
+                        ui.add_space(4.0);
+                        if widgets::power_pill_button(ui, st.power, !self.busy) {
                             st.power = !st.power;
                             self.status = Some(st.clone());
                             self.send_cmd(vec![("Pow", i64::from(st.power))]);
                         }
+                    });
 
-                        ui.add_space(16.0);
+                    ui.add_space(10.0);
 
-                        ui.vertical(|ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(
-                                    egui::RichText::new(format!("{} °C", st.set_temp))
-                                        .size(34.0)
-                                        .strong(),
-                                );
-                                if let Some(room) = st.current_temp {
-                                    ui.add_space(12.0);
-                                    ui.label(
-                                        egui::RichText::new(format!("Ambiente: {room} °C"))
-                                            .size(16.0)
-                                            .weak(),
-                                    );
-                                }
-                            });
+                    // 2. Mode Segmented Pill Card
+                    theme::card_frame().show(ui, |ui| {
+                        ui.set_min_width(ui.available_width());
+                        if let Some(new_mode) =
+                            widgets::mode_segmented_bar(ui, st.mode, accent, !self.busy)
+                        {
+                            st.mode = new_mode;
+                            self.status = Some(st.clone());
+                            self.send_cmd(vec![("Mod", new_mode as i64)]);
+                        }
+                    });
 
-                            ui.horizontal(|ui| {
-                                if ui
-                                    .add_enabled(
-                                        !self.busy && st.set_temp > 16,
-                                        egui::Button::new("  −  "),
-                                    )
-                                    .clicked()
-                                {
-                                    st.set_temp -= 1;
-                                    self.status = Some(st.clone());
-                                    self.send_cmd(vec![("TemUn", 0), ("SetTem", st.set_temp)]);
-                                }
+                    ui.add_space(10.0);
 
-                                let slider = ui.add_enabled(
-                                    !self.busy,
-                                    egui::Slider::new(&mut st.set_temp, 16..=30).show_value(false),
-                                );
-                                if slider.drag_stopped() {
-                                    self.status = Some(st.clone());
-                                    self.send_cmd(vec![("TemUn", 0), ("SetTem", st.set_temp)]);
-                                } else if slider.changed() {
-                                    self.status = Some(st.clone());
-                                }
+                    // 3. Fan Speed 6-Step Bar Card
+                    theme::card_frame().show(ui, |ui| {
+                        ui.set_min_width(ui.available_width());
+                        if let Some(new_speed) =
+                            widgets::fan_speed_bar(ui, st.fan_speed, accent, !self.busy)
+                        {
+                            st.fan_speed = new_speed;
+                            self.status = Some(st.clone());
+                            self.send_cmd(vec![("WdSpd", new_speed as i64)]);
+                        }
+                    });
 
-                                if ui
-                                    .add_enabled(
-                                        !self.busy && st.set_temp < 30,
-                                        egui::Button::new("  +  "),
-                                    )
-                                    .clicked()
-                                {
-                                    st.set_temp += 1;
-                                    self.status = Some(st.clone());
-                                    self.send_cmd(vec![("TemUn", 0), ("SetTem", st.set_temp)]);
-                                }
-                            });
+                    ui.add_space(10.0);
+
+                    // 4. Airflow / Swing Card
+                    theme::card_frame().show(ui, |ui| {
+                        ui.set_min_width(ui.available_width());
+                        let half_w = ((ui.available_width() - 12.0) * 0.5).max(160.0);
+                        ui.horizontal(|ui| {
+                            // Vertical swing
+                            egui::Frame::new()
+                                .fill(CARD_INNER)
+                                .stroke(Stroke::new(1.0_f32, BORDER))
+                                .corner_radius(CornerRadius::same(10))
+                                .inner_margin(Margin::symmetric(10, 6))
+                                .show(ui, |ui| {
+                                    ui.set_width(half_w - 22.0);
+                                    ui.horizontal(|ui| {
+                                        let (ir, _) = ui.allocate_exact_size(
+                                            vec2(18.0, 20.0),
+                                            egui::Sense::hover(),
+                                        );
+                                        draw_icon(
+                                            ui.painter(),
+                                            ir.center(),
+                                            7.5,
+                                            Icon::SwingV,
+                                            TEXT_MUTED,
+                                        );
+                                        egui::ComboBox::from_id_salt("v_swing")
+                                            .width(ui.available_width())
+                                            .selected_text(st.vertical_swing.label())
+                                            .show_ui(ui, |ui| {
+                                                for swing in VerticalSwing::ALL {
+                                                    if ui
+                                                        .selectable_value(
+                                                            &mut st.vertical_swing,
+                                                            swing,
+                                                            swing.label(),
+                                                        )
+                                                        .changed()
+                                                    {
+                                                        self.status = Some(st.clone());
+                                                        self.send_cmd(vec![(
+                                                            "SwUpDn",
+                                                            swing as i64,
+                                                        )]);
+                                                    }
+                                                }
+                                            });
+                                    });
+                                });
+
+                            ui.add_space(4.0);
+
+                            // Horizontal swing
+                            egui::Frame::new()
+                                .fill(CARD_INNER)
+                                .stroke(Stroke::new(1.0_f32, BORDER))
+                                .corner_radius(CornerRadius::same(10))
+                                .inner_margin(Margin::symmetric(10, 6))
+                                .show(ui, |ui| {
+                                    ui.set_width(half_w - 22.0);
+                                    ui.horizontal(|ui| {
+                                        let (ir, _) = ui.allocate_exact_size(
+                                            vec2(18.0, 20.0),
+                                            egui::Sense::hover(),
+                                        );
+                                        draw_icon(
+                                            ui.painter(),
+                                            ir.center(),
+                                            7.5,
+                                            Icon::SwingH,
+                                            TEXT_MUTED,
+                                        );
+                                        egui::ComboBox::from_id_salt("h_swing")
+                                            .width(ui.available_width())
+                                            .selected_text(st.horizontal_swing.label())
+                                            .show_ui(ui, |ui| {
+                                                for swing in HorizontalSwing::ALL {
+                                                    if ui
+                                                        .selectable_value(
+                                                            &mut st.horizontal_swing,
+                                                            swing,
+                                                            swing.label(),
+                                                        )
+                                                        .changed()
+                                                    {
+                                                        self.status = Some(st.clone());
+                                                        self.send_cmd(vec![(
+                                                            "SwingLfRig",
+                                                            swing as i64,
+                                                        )]);
+                                                    }
+                                                }
+                                            });
+                                    });
+                                });
                         });
                     });
-                });
 
-                ui.add_space(8.0);
+                    ui.add_space(10.0);
 
-                // Mode selector
-                ui.group(|ui| {
-                    ui.set_min_width(ui.available_width());
-                    ui.label(egui::RichText::new("Modo de operación").strong());
-                    ui.add_space(4.0);
-                    ui.horizontal_wrapped(|ui| {
-                        for mode in AcMode::ALL {
-                            let selected = st.mode == mode;
-                            if ui
-                                .add_enabled(
-                                    !self.busy,
-                                    egui::SelectableLabel::new(selected, mode.label()),
-                                )
-                                .clicked()
-                                && !selected
-                            {
-                                st.mode = mode;
-                                self.status = Some(st.clone());
-                                self.send_cmd(vec![("Mod", mode as i64)]);
-                            }
-                        }
-                    });
-                });
+                    // 5. Quick Features 3x3 Glowing Tiles Card
+                    theme::card_frame().show(ui, |ui| {
+                        ui.set_min_width(ui.available_width());
+                        let gap = 8.0;
+                        let tile_w = ((ui.available_width() - gap * 2.0) / 3.0).max(110.0);
+                        let mut cmd_to_send: Option<(&str, i64)> = None;
 
-                ui.add_space(8.0);
-
-                // Fan speed selector
-                ui.group(|ui| {
-                    ui.set_min_width(ui.available_width());
-                    ui.label(egui::RichText::new("Velocidad del ventilador").strong());
-                    ui.add_space(4.0);
-                    ui.horizontal_wrapped(|ui| {
-                        for speed in FanSpeed::ALL {
-                            let selected = st.fan_speed == speed;
-                            if ui
-                                .add_enabled(
-                                    !self.busy,
-                                    egui::SelectableLabel::new(selected, speed.label()),
-                                )
-                                .clicked()
-                                && !selected
-                            {
-                                st.fan_speed = speed;
-                                self.status = Some(st.clone());
-                                self.send_cmd(vec![("WdSpd", speed as i64)]);
-                            }
-                        }
-                    });
-                });
-
-                ui.add_space(8.0);
-
-                // Swing controls
-                ui.group(|ui| {
-                    ui.set_min_width(ui.available_width());
-                    ui.label(egui::RichText::new("Oscilación (Swing)").strong());
-                    ui.add_space(4.0);
-                    ui.horizontal_wrapped(|ui| {
-                        ui.label("Vertical:");
-                        egui::ComboBox::from_id_salt("v_swing")
-                            .selected_text(st.vertical_swing.label())
-                            .show_ui(ui, |ui| {
-                                for swing in VerticalSwing::ALL {
-                                    if ui
-                                        .selectable_value(
-                                            &mut st.vertical_swing,
-                                            swing,
-                                            swing.label(),
-                                        )
-                                        .changed()
-                                    {
-                                        self.status = Some(st.clone());
-                                        self.send_cmd(vec![("SwUpDn", swing as i64)]);
-                                    }
-                                }
-                            });
-
-                        ui.add_space(12.0);
-                        ui.label("Horizontal:");
-                        egui::ComboBox::from_id_salt("h_swing")
-                            .selected_text(st.horizontal_swing.label())
-                            .show_ui(ui, |ui| {
-                                for swing in HorizontalSwing::ALL {
-                                    if ui
-                                        .selectable_value(
-                                            &mut st.horizontal_swing,
-                                            swing,
-                                            swing.label(),
-                                        )
-                                        .changed()
-                                    {
-                                        self.status = Some(st.clone());
-                                        self.send_cmd(vec![("SwingLfRig", swing as i64)]);
-                                    }
-                                }
-                            });
-                    });
-                });
-
-                ui.add_space(8.0);
-
-                // Extra feature toggles
-                ui.group(|ui| {
-                    ui.set_min_width(ui.available_width());
-                    ui.label(egui::RichText::new("Funciones adicionales").strong());
-                    ui.add_space(4.0);
-
-                    let mut cmd_to_send: Option<(&str, i64)> = None;
-                    egui::Grid::new("toggles_grid")
-                        .num_columns(3)
-                        .spacing([24.0, 8.0])
-                        .show(ui, |ui| {
-                            if ui.checkbox(&mut st.light, "💡 Luz / Display").changed() {
+                        ui.horizontal(|ui| {
+                            if widgets::feature_tile(
+                                ui,
+                                Icon::Bulb,
+                                "Luz",
+                                st.light,
+                                accent,
+                                tile_w,
+                                !self.busy,
+                            ) {
+                                st.light = !st.light;
                                 cmd_to_send = Some(("Lig", i64::from(st.light)));
                             }
-                            if ui.checkbox(&mut st.turbo, "⚡ Turbo").changed() {
+                            if widgets::feature_tile(
+                                ui,
+                                Icon::Turbo,
+                                "Turbo",
+                                st.turbo,
+                                accent,
+                                tile_w,
+                                !self.busy,
+                            ) {
+                                st.turbo = !st.turbo;
                                 cmd_to_send = Some(("Tur", i64::from(st.turbo)));
                             }
-                            if ui.checkbox(&mut st.quiet, "🔇 Silencio (Quiet)").changed() {
+                            if widgets::feature_tile(
+                                ui,
+                                Icon::Quiet,
+                                "Silencio",
+                                st.quiet,
+                                accent,
+                                tile_w,
+                                !self.busy,
+                            ) {
+                                st.quiet = !st.quiet;
                                 cmd_to_send = Some(("Quiet", i64::from(st.quiet)));
                             }
-                            ui.end_row();
-
-                            if ui.checkbox(&mut st.sleep, "🌙 Dormir (Sleep)").changed() {
-                                cmd_to_send = Some(("SwhSlp", i64::from(st.sleep)));
-                            }
-                            if ui.checkbox(&mut st.xfan, "💨 X-Fan (Blow)").changed() {
-                                cmd_to_send = Some(("Blo", i64::from(st.xfan)));
-                            }
-                            if ui.checkbox(&mut st.health, "🛡 Salud (Health)").changed() {
-                                cmd_to_send = Some(("Health", i64::from(st.health)));
-                            }
-                            ui.end_row();
-
-                            if ui.checkbox(&mut st.saving, "🌱 Ahorro (Saving)").changed() {
-                                cmd_to_send = Some(("SvSt", i64::from(st.saving)));
-                            }
-                            if ui.checkbox(&mut st.air, "🍃 Aire fresco").changed() {
-                                cmd_to_send = Some(("Air", i64::from(st.air)));
-                            }
-                            if ui.checkbox(&mut st.freeze_guard, "❄ 8°C Anti-hielo").changed() {
-                                cmd_to_send = Some(("StHt", i64::from(st.freeze_guard)));
-                            }
-                            ui.end_row();
                         });
 
-                    if let Some(pair) = cmd_to_send {
-                        self.status = Some(st);
-                        self.send_cmd(vec![pair]);
-                    }
+                        ui.horizontal(|ui| {
+                            if widgets::feature_tile(
+                                ui,
+                                Icon::Sleep,
+                                "Dormir",
+                                st.sleep,
+                                accent,
+                                tile_w,
+                                !self.busy,
+                            ) {
+                                st.sleep = !st.sleep;
+                                cmd_to_send = Some(("SwhSlp", i64::from(st.sleep)));
+                            }
+                            if widgets::feature_tile(
+                                ui,
+                                Icon::Fan,
+                                "X-Fan",
+                                st.xfan,
+                                accent,
+                                tile_w,
+                                !self.busy,
+                            ) {
+                                st.xfan = !st.xfan;
+                                cmd_to_send = Some(("Blo", i64::from(st.xfan)));
+                            }
+                            if widgets::feature_tile(
+                                ui,
+                                Icon::Health,
+                                "Salud",
+                                st.health,
+                                accent,
+                                tile_w,
+                                !self.busy,
+                            ) {
+                                st.health = !st.health;
+                                cmd_to_send = Some(("Health", i64::from(st.health)));
+                            }
+                        });
+
+                        ui.horizontal(|ui| {
+                            if widgets::feature_tile(
+                                ui,
+                                Icon::Saving,
+                                "Ahorro",
+                                st.saving,
+                                accent,
+                                tile_w,
+                                !self.busy,
+                            ) {
+                                st.saving = !st.saving;
+                                cmd_to_send = Some(("SvSt", i64::from(st.saving)));
+                            }
+                            if widgets::feature_tile(
+                                ui,
+                                Icon::Air,
+                                "Aire",
+                                st.air,
+                                accent,
+                                tile_w,
+                                !self.busy,
+                            ) {
+                                st.air = !st.air;
+                                cmd_to_send = Some(("Air", i64::from(st.air)));
+                            }
+                            if widgets::feature_tile(
+                                ui,
+                                Icon::Freeze,
+                                "8°C",
+                                st.freeze_guard,
+                                accent,
+                                tile_w,
+                                !self.busy,
+                            ) {
+                                st.freeze_guard = !st.freeze_guard;
+                                cmd_to_send = Some(("StHt", i64::from(st.freeze_guard)));
+                            }
+                        });
+
+                        if let Some(pair) = cmd_to_send {
+                            self.status = Some(st);
+                            self.send_cmd(vec![pair]);
+                        }
+                    });
                 });
             });
-        });
     }
-}
-
-fn draw_power_button(
-    ui: &mut egui::Ui,
-    enabled: bool,
-    label: &str,
-    base_color: egui::Color32,
-) -> bool {
-    let desired_size = egui::vec2(165.0, 54.0);
-    let sense = if enabled {
-        egui::Sense::click()
-    } else {
-        egui::Sense::hover()
-    };
-    let (rect, response) = ui.allocate_exact_size(desired_size, sense);
-
-    if ui.is_rect_visible(rect) {
-        let mut fill = base_color;
-        if !enabled {
-            fill = fill.gamma_multiply(0.6);
-        } else if response.is_pointer_button_down_on() {
-            fill = fill.gamma_multiply(0.85);
-        } else if response.hovered() {
-            fill = fill.gamma_multiply(1.1);
-        }
-
-        let painter = ui.painter();
-        painter.rect_filled(rect, egui::CornerRadius::same(6), fill);
-
-        let fg = egui::Color32::WHITE;
-        let icon_center = egui::pos2(rect.left() + 26.0, rect.center().y);
-        let radius = 8.5_f32;
-        let stroke = egui::Stroke::new(2.2_f32, fg);
-
-        // Draw open circle arc (~280 degrees, gap at the top)
-        let segments = 24;
-        let start_angle = -std::f32::consts::FRAC_PI_2 + 0.55;
-        let end_angle = start_angle + (std::f32::consts::TAU - 1.10);
-        let points: Vec<egui::Pos2> = (0..=segments)
-            .map(|i| {
-                let t = i as f32 / segments as f32;
-                let angle = start_angle + t * (end_angle - start_angle);
-                egui::pos2(
-                    icon_center.x + radius * angle.cos(),
-                    icon_center.y + radius * angle.sin(),
-                )
-            })
-            .collect();
-        painter.add(egui::Shape::line(points, stroke));
-
-        // Draw top vertical stem of the power icon
-        painter.line_segment(
-            [
-                egui::pos2(icon_center.x, icon_center.y - radius - 2.0),
-                egui::pos2(icon_center.x, icon_center.y - 1.5),
-            ],
-            stroke,
-        );
-
-        // Draw button label
-        painter.text(
-            egui::pos2(rect.left() + 46.0, rect.center().y),
-            egui::Align2::LEFT_CENTER,
-            label,
-            egui::FontId::proportional(17.0),
-            fg,
-        );
-    }
-
-    enabled && response.clicked()
 }
