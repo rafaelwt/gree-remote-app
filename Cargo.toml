@@ -1,6 +1,6 @@
 [package]
 name = "gree-remote-app"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2024"
 description = "100% Rust + egui desktop remote control for Gree Smart Air Conditioners"
 
