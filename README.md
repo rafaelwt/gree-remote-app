@@ -49,6 +49,8 @@ Gree Smart Air Conditioners expose a local UDP JSON protocol on port `7000`, all
 | Full climate control | Power toggle, target temperature (`16–30 °C`), mode (`Auto`, `Cool`, `Dry`, `Fan`, `Heat`), and fan speed |
 | Airflow & extras | Vertical/horizontal swing, LED display light, Turbo, Quiet, Sleep, X-Fan, Health, Saving, Fresh Air, and 8 °C guard |
 | Live sensor & polling | Displays the unit's internal ambient temperature sensor (`TemSen`) with optional 10-second auto-refresh |
+| Timer & clock sync | Schedule power ON/OFF (`30m`, `1h`, `2h`, `3h`, or custom minutes) using the AC's native `setT` + clock sync (with automatic app-side fallback) |
+| Native KDE System Tray | Minimizes to the Linux system tray (`ksni` / StatusNotifierItem) with quick Show/Hide, Power toggle, and Refresh actions |
 | CLI scan mode | Includes a `--scan` flag to discover, bind, and print device status directly in the terminal |
 
 ## Tech Stack
@@ -79,7 +81,8 @@ graph LR
 ```text
 src/
 ├── main.rs            # Entry point (eframe native window & --scan CLI mode)
-├── app.rs             # egui layout, state management, and background worker
+├── app.rs             # egui layout, state management, timer, and background worker
+├── tray.rs            # Native Linux KDE/freedesktop System Tray (StatusNotifierItem)
 ├── ui/
 │   ├── theme.rs       # Dark theme visuals and dynamic mode accent palette
 │   ├── icons.rs       # 100% vector icon library drawn with egui::Painter
@@ -183,8 +186,8 @@ cargo run -- --scan
 ## Roadmap
 
 - Support Fahrenheit (`TemUn` / `TemRec`) display and control
-- System tray integration and quick toggle menu
-- Device schedule / timer management (`setT`)
+- Windows & macOS system tray support
+- Multi-slot weekly schedules (`setT`)
 
 ## Contributing
 

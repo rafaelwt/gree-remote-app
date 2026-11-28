@@ -23,6 +23,7 @@ pub enum Icon {
     Saving,
     Air,
     Freeze,
+    Timer,
     Minus,
     Plus,
 }
@@ -290,6 +291,12 @@ pub fn draw_icon(painter: &Painter, c: Pos2, r: f32, icon: Icon, color: Color32)
                 Stroke::new(sw * 1.4, color),
             );
             painter.circle_filled(pos2(c.x, c.y + r * 0.52), r * 0.34, color);
+        }
+        Icon::Timer => {
+            // Clock face + hands
+            painter.circle_stroke(c, r * 0.82, stroke);
+            painter.line_segment([c, pos2(c.x, c.y - r * 0.50)], stroke);
+            painter.line_segment([c, pos2(c.x + r * 0.42, c.y + r * 0.18)], stroke);
         }
         Icon::Minus => {
             painter.line_segment(

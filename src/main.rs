@@ -2,6 +2,7 @@
 
 mod app;
 mod gree;
+mod tray;
 mod ui;
 
 use std::net::Ipv4Addr;

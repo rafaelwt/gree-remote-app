@@ -303,3 +303,99 @@ pub fn set_params(dev: &DeviceInfo, params: &[(&str, i64)]) -> Result<(), String
         Err(format!("Device returned error code r={}", cmd_resp.r))
     }
 }
+
+/// Synchronizes the AC's internal clock with the host's local time.
+pub fn sync_device_time(dev: &DeviceInfo) -> Result<(), String> {
+    let key = dev
+        .key
+        .as_deref()
+        .ok_or_else(|| "Device is not bound (missing key)".to_string())?;
+
+    let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let pack_json = format!(
+        r#"{{"opt":["time"],"p":["{}"],"sub":"{}","t":"cmd"}}"#,
+        now, dev.id
+    );
+    let enc = encrypt_pack(&pack_json, key, dev.encryption)?;
+    let req = build_request_envelope(&dev.id, &enc, 0);
+
+    let resp_bytes = send_unicast(dev.ip, req.as_bytes(), Duration::from_secs(3))?;
+    let env = parse_envelope(&resp_bytes)?;
+    let pack_b64 = env
+        .pack
+        .as_deref()
+        .ok_or_else(|| "Time sync response missing 'pack'".to_string())?;
+
+    let decrypted = decrypt_pack(pack_b64, env.tag.as_deref(), key, dev.encryption)?;
+    let cmd_resp: CmdResponsePack =
+        serde_json::from_str(&decrypted).map_err(|e| format!("Invalid time sync JSON: {e}"))?;
+
+    if cmd_resp.r == 200 {
+        Ok(())
+    } else {
+        Err(format!("Time sync rejected with r={}", cmd_resp.r))
+    }
+}
+
+/// Sends a native Gree schedule (`setT`) to turn the AC on or off at `(hour, minute)`.
+/// First syncs the device clock so the AC triggers at the exact local time.
+pub fn set_device_timer(
+    dev: &DeviceInfo,
+    enable: bool,
+    power_on: bool,
+    hour: u32,
+    minute: u32,
+    weekday_sun0: usize,
+) -> Result<(), String> {
+    let key = dev
+        .key
+        .as_deref()
+        .ok_or_else(|| "Device is not bound (missing key)".to_string())?;
+
+    if enable {
+        let _ = sync_device_time(dev);
+    }
+
+    let mut week = [0u8; 7];
+    if weekday_sun0 < 7 {
+        week[weekday_sun0] = 1;
+    }
+    let tz_hours = chrono::Local::now().offset().local_minus_utc() / 3600;
+    let pack_json = serde_json::json!({
+        "cmd": [{
+            "mac": [dev.id],
+            "opt": ["Pow"],
+            "p": [i64::from(power_on)]
+        }],
+        "enable": u8::from(enable),
+        "hr": hour,
+        "id": 0,
+        "min": minute,
+        "name": "4772656554696d6572",
+        "sec": 0,
+        "t": "setT",
+        "tz": tz_hours,
+        "week": week
+    })
+    .to_string();
+
+    let enc = encrypt_pack(&pack_json, key, dev.encryption)?;
+    let req = build_request_envelope(&dev.id, &enc, 0);
+
+    let resp_bytes = send_unicast(dev.ip, req.as_bytes(), Duration::from_secs(3))?;
+    let env = parse_envelope(&resp_bytes)?;
+    let pack_b64 = env
+        .pack
+        .as_deref()
+        .ok_or_else(|| "Timer response missing 'pack'".to_string())?;
+
+    let decrypted = decrypt_pack(pack_b64, env.tag.as_deref(), key, dev.encryption)?;
+    let cmd_resp: CmdResponsePack =
+        serde_json::from_str(&decrypted).map_err(|e| format!("Invalid timer response JSON: {e}"))?;
+
+    if cmd_resp.r == 200 {
+        Ok(())
+    } else {
+        Err(format!("Device rejected timer with r={}", cmd_resp.r))
+    }
+}
