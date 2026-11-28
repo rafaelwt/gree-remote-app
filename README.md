@@ -10,6 +10,7 @@
   <img alt="Last Commit" src="https://img.shields.io/github/last-commit/rafaelwt/gree-remote-app">
   <img alt="Rust" src="https://img.shields.io/badge/Rust-2024-000000?logo=rust&logoColor=white">
   <img alt="egui" src="https://img.shields.io/badge/egui-0.31-2B7BB9">
+  <img alt="Platform" src="https://img.shields.io/badge/Platform-Linux%20%7C%20Windows%20%7C%20macOS-1F2937">
 </p>
 
 <p align="center">
@@ -37,7 +38,7 @@
 
 ## About
 
-Gree Smart Air Conditioners expose a local UDP JSON protocol on port `7000`, allowing full control without relying on cloud servers. **Gree Remote App** provides a fast, lightweight Linux desktop interface (with zero C++ or OpenSSL dependencies) to discover, bind, monitor, and control Gree units directly on your LAN.
+Gree Smart Air Conditioners expose a local UDP JSON protocol on port `7000`, allowing full control without relying on cloud servers. **Gree Remote App** provides a fast, lightweight cross-platform desktop interface (**Linux, Windows, and macOS**) with zero C++ or OpenSSL dependencies to discover, bind, monitor, and control Gree units directly on your LAN.
 
 ## Features
 
@@ -160,7 +161,6 @@ cargo run -- --scan
 - Support Fahrenheit (`TemUn` / `TemRec`) display and control
 - System tray integration and quick toggle menu
 - Device schedule / timer management (`setT`)
-- Cross-platform release packaging (`.exe`, `.dmg`, Arch `PKGBUILD` / `AppImage`)
 
 ## Contributing
 
