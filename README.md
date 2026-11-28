@@ -102,27 +102,51 @@ src/
 
 ### Installation & Run
 
-**Pre-built binaries (GitHub Releases):** Download the latest release for **Linux** (`.tar.gz`), **Windows** (`.exe`), or **macOS** (`.dmg`) from the [Releases](https://github.com/rafaelwt/gree-remote-app/releases) page.
+**Pre-built binaries (GitHub Releases):** Download the latest release for **Windows** (`.exe`), **macOS** (`.dmg`), or **Linux** (`.tar.gz`) from the [Releases](https://github.com/rafaelwt/gree-remote-app/releases) page.
 
-**From source:**
+#### Linux: Install, Update & Uninstall
 
-```bash
-git clone https://github.com/rafaelwt/gree-remote-app.git
-cd gree-remote-app
-cargo run --release
-```
-
-**Install on Linux / KDE Plasma (with desktop launcher & icon):**
+**Install from `.tar.gz` (no `sudo` required):**
 
 ```bash
-./packaging/linux/install-user.sh
+tar -xzf gree-remote-app-linux-x86_64.tar.gz
+cd gree-remote-app-linux-x86_64
+./install-user.sh
 ```
+
+This installs the binary to `~/.local/bin/`, the desktop launcher to `~/.local/share/applications/` (appears under **Utilities** and **Internet** in KDE/GNOME), and the icon to `~/.local/share/icons/hicolor/256x256/apps/`.
 
 **Install on Arch Linux / CachyOS (`PKGBUILD`):**
 
 ```bash
 cd packaging/arch
 makepkg -si
+```
+
+**Update:**
+- **`.tar.gz` install:** Download the newer `.tar.gz` from Releases, extract it, and re-run `./install-user.sh`. Your saved device cache (`~/.config/gree-remote-app/devices.json`) is preserved.
+- **Arch / CachyOS:** Pull the latest changes and re-run `makepkg -si`.
+
+**Uninstall:**
+
+```bash
+# If installed with ./install-user.sh
+rm -f ~/.local/bin/gree-remote-app \
+      ~/.local/share/applications/gree-remote-app.desktop \
+      ~/.local/share/icons/hicolor/256x256/apps/gree-remote-app.png
+# Optional: also remove cached device IP/keys
+rm -rf ~/.config/gree-remote-app
+
+# If installed with Arch PKGBUILD
+sudo pacman -R gree-remote-app
+```
+
+**Build from source:**
+
+```bash
+git clone https://github.com/rafaelwt/gree-remote-app.git
+cd gree-remote-app
+cargo run --release
 ```
 
 ### Verify
