@@ -1,12 +1,24 @@
-# Gree Remote App
+<p align="center">
+  <img src="assets/icon.png" alt="Gree Remote App Icon" width="96">
+</p>
 
-![License](https://img.shields.io/github/license/rafaelwt/gree-remote-app)
-![Last Commit](https://img.shields.io/github/last-commit/rafaelwt/gree-remote-app)
-![Rust](https://img.shields.io/badge/Rust-2024-000000?logo=rust&logoColor=white)
-![egui](https://img.shields.io/badge/egui-0.31-2B7BB9)
-![Platform](https://img.shields.io/badge/Linux-Desktop-FCC624?logo=linux&logoColor=black)
+<h1 align="center">Gree Remote App</h1>
 
-A native, 100% Rust desktop remote control for Gree Smart Air Conditioners over the local network, built with `egui` / `eframe`.
+<p align="center">
+  <img alt="License" src="https://img.shields.io/github/license/rafaelwt/gree-remote-app">
+  <img alt="Release" src="https://img.shields.io/github/v/release/rafaelwt/gree-remote-app">
+  <img alt="Last Commit" src="https://img.shields.io/github/last-commit/rafaelwt/gree-remote-app">
+  <img alt="Rust" src="https://img.shields.io/badge/Rust-2024-000000?logo=rust&logoColor=white">
+  <img alt="egui" src="https://img.shields.io/badge/egui-0.31-2B7BB9">
+</p>
+
+<p align="center">
+  A native, 100% Safe Rust desktop remote control for Gree Smart Air Conditioners over the local network, built with <code>egui</code> / <code>eframe</code>.
+</p>
+
+<p align="center">
+  <img src="assets/screenshot.png" alt="Gree Remote App Screenshot" width="380">
+</p>
 
 ## Table of Contents
 

@@ -382,3 +382,53 @@ impl AcStatus {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn parse_status_with_ambient_sensor_offset() {
+        let resp = StatusResponsePack {
+            cols: vec![
+                "Pow", "Mod", "SetTem", "TemSen", "WdSpd", "SwUpDn", "SwingLfRig", "Lig", "Health",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect(),
+            dat: vec![
+                json!(1),
+                json!(1),
+                json!(24),
+                json!(69), // 69 - 40 = 29 °C
+                json!(3),
+                json!(1),
+                json!(1),
+                json!(1),
+                json!(1),
+            ],
+        };
+        let st = AcStatus::from_response(&resp);
+        assert!(st.power);
+        assert_eq!(st.mode, AcMode::Cool);
+        assert_eq!(st.set_temp, 24);
+        assert_eq!(st.current_temp, Some(29));
+        assert_eq!(st.fan_speed, FanSpeed::Medium);
+        assert_eq!(st.vertical_swing, VerticalSwing::FullSwing);
+        assert_eq!(st.horizontal_swing, HorizontalSwing::FullSwing);
+        assert!(st.light);
+        assert!(st.health);
+    }
+
+    #[test]
+    fn parse_status_missing_ambient_sensor() {
+        let resp = StatusResponsePack {
+            cols: vec!["Pow".to_string(), "TemSen".to_string()],
+            dat: vec![json!(0), json!(0)],
+        };
+        let st = AcStatus::from_response(&resp);
+        assert!(!st.power);
+        assert_eq!(st.current_temp, None);
+    }
+}

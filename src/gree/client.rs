@@ -170,12 +170,11 @@ pub fn scan_and_bind(manual_ip: Option<Ipv4Addr>) -> Result<Vec<DeviceInfo>, Str
         let _ = sock.set_read_timeout(Some(remaining.min(Duration::from_millis(300))));
         match sock.recv_from(&mut buf) {
             Ok((n, src)) => {
-                if let IpAddr::V4(ip) = src.ip() {
-                    if let Ok(dev) = parse_scan_response(ip, &buf[..n]) {
-                        if seen_ids.insert(dev.id.clone()) {
-                            devices.push(dev);
-                        }
-                    }
+                if let IpAddr::V4(ip) = src.ip()
+                    && let Ok(dev) = parse_scan_response(ip, &buf[..n])
+                    && seen_ids.insert(dev.id.clone())
+                {
+                    devices.push(dev);
                 }
             }
             Err(_) => continue,
