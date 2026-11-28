@@ -3,6 +3,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use chrono::{Datelike, Duration as ChronoDuration, Local, Timelike};
 use eframe::egui::{self, CornerRadius, Margin, RichText, Stroke, vec2};
 
 use crate::gree::client;
@@ -10,11 +11,23 @@ use crate::gree::protocol::{
     AcMode, AcStatus, DeviceInfo, HorizontalSwing, VerticalSwing,
 };
 use crate::gree::storage;
+use crate::tray::{TrayAction, TrayController, TrayState};
 use crate::ui::icons::{Icon, draw_icon};
 use crate::ui::theme::{
     self, BG_DEEP, BORDER, CARD_BG, CARD_INNER, ERROR, POWER_ON, TEXT_MUTED, TEXT_PRIMARY,
 };
 use crate::ui::widgets;
+
+#[derive(Debug, Clone)]
+struct ActiveTimer {
+    target_time_label: String,
+    deadline: Instant,
+    power_on: bool,
+    on_device: bool,
+    hour: u32,
+    minute: u32,
+    weekday_sun0: usize,
+}
 
 enum WorkerCmd {
     ProbeCached(DeviceInfo),
@@ -24,6 +37,22 @@ enum WorkerCmd {
         device: DeviceInfo,
         params: Vec<(String, i64)>,
     },
+    SetTimer {
+        device: DeviceInfo,
+        power_on: bool,
+        hour: u32,
+        minute: u32,
+        weekday_sun0: usize,
+        minutes_from_now: u64,
+        target_label: String,
+    },
+    CancelTimer {
+        device: DeviceInfo,
+        power_on: bool,
+        hour: u32,
+        minute: u32,
+        weekday_sun0: usize,
+    },
 }
 
 enum WorkerEvent {
@@ -31,11 +60,18 @@ enum WorkerEvent {
     ScanResult(Result<Vec<DeviceInfo>, String>),
     StatusResult(String, Result<AcStatus, String>),
     CommandResult(Result<(), String>),
+    TimerSetResult {
+        timer: ActiveTimer,
+        message: String,
+    },
+    TimerCancelled(String),
 }
 
 pub struct GreeRemoteApp {
     cmd_tx: Sender<WorkerCmd>,
     evt_rx: Receiver<WorkerEvent>,
+    tray_rx: Receiver<TrayAction>,
+    tray: Option<TrayController>,
 
     devices: Vec<DeviceInfo>,
     selected_idx: usize,
@@ -43,6 +79,15 @@ pub struct GreeRemoteApp {
 
     manual_ip: String,
     show_settings: bool,
+    show_timer: bool,
+    timer_minutes: u32,
+    timer_power_on: bool,
+    active_timer: Option<ActiveTimer>,
+
+    minimize_to_tray: bool,
+    window_visible: bool,
+    allow_close: bool,
+
     busy: bool,
     auto_refresh: bool,
     last_refresh: Instant,
@@ -56,6 +101,8 @@ impl GreeRemoteApp {
 
         let (cmd_tx, cmd_rx) = mpsc::channel::<WorkerCmd>();
         let (evt_tx, evt_rx) = mpsc::channel::<WorkerEvent>();
+        let (tray_tx, tray_rx) = mpsc::channel::<TrayAction>();
+        let tray = TrayController::spawn(tray_tx, cc.egui_ctx.clone());
         let ctx = cc.egui_ctx.clone();
 
         thread::spawn(move || {
@@ -110,6 +157,64 @@ impl GreeRemoteApp {
                         }
                         ctx.request_repaint();
                     }
+                    WorkerCmd::SetTimer {
+                        device,
+                        power_on,
+                        hour,
+                        minute,
+                        weekday_sun0,
+                        minutes_from_now,
+                        target_label,
+                    } => {
+                        let native_ok = client::set_device_timer(
+                            &device,
+                            true,
+                            power_on,
+                            hour,
+                            minute,
+                            weekday_sun0,
+                        )
+                        .is_ok();
+                        let action_txt = if power_on { "Encender" } else { "Apagar" };
+                        let message = if native_ok {
+                            format!("{action_txt} programado en el aire a las {target_label}")
+                        } else {
+                            format!(
+                                "{action_txt} programado en la app (bandeja) a las {target_label}"
+                            )
+                        };
+                        let timer = ActiveTimer {
+                            target_time_label: target_label,
+                            deadline: Instant::now() + Duration::from_secs(minutes_from_now * 60),
+                            power_on,
+                            on_device: native_ok,
+                            hour,
+                            minute,
+                            weekday_sun0,
+                        };
+                        let _ = evt_tx.send(WorkerEvent::TimerSetResult { timer, message });
+                        ctx.request_repaint();
+                    }
+                    WorkerCmd::CancelTimer {
+                        device,
+                        power_on,
+                        hour,
+                        minute,
+                        weekday_sun0,
+                    } => {
+                        let _ = client::set_device_timer(
+                            &device,
+                            false,
+                            power_on,
+                            hour,
+                            minute,
+                            weekday_sun0,
+                        );
+                        let _ = evt_tx.send(WorkerEvent::TimerCancelled(
+                            "Temporizador cancelado".to_string(),
+                        ));
+                        ctx.request_repaint();
+                    }
                 }
             }
         });
@@ -124,17 +229,27 @@ impl GreeRemoteApp {
         let app = Self {
             cmd_tx,
             evt_rx,
+            tray_rx,
+            tray,
             devices: cached_devices,
             selected_idx: 0,
             status: None,
             manual_ip: String::new(),
             show_settings: false,
+            show_timer: false,
+            timer_minutes: 60,
+            timer_power_on: false,
+            active_timer: None,
+            minimize_to_tray: true,
+            window_visible: true,
+            allow_close: false,
             busy: true,
             auto_refresh: true,
             last_refresh: Instant::now(),
             status_message: initial_msg,
             is_error: false,
         };
+        app.sync_tray();
         if let Some(first) = app.devices.first().cloned() {
             let _ = app.cmd_tx.send(WorkerCmd::ProbeCached(first));
         } else {
@@ -166,6 +281,113 @@ impl GreeRemoteApp {
         if let Some(dev) = self.selected_device().cloned() {
             self.last_refresh = Instant::now();
             let _ = self.cmd_tx.send(WorkerCmd::Refresh(dev));
+        }
+    }
+
+    fn sync_tray(&self) {
+        if let Some(ref tray) = self.tray {
+            let device_name = self
+                .selected_device()
+                .map(|d| d.display_name())
+                .unwrap_or_else(|| "Sin equipo conectado".to_string());
+            tray.update(TrayState {
+                power: self.status.as_ref().map(|s| s.power),
+                set_temp: self.status.as_ref().map(|s| s.set_temp),
+                room_temp: self.status.as_ref().and_then(|s| s.current_temp),
+                device_name,
+                window_visible: self.window_visible,
+            });
+        }
+    }
+
+    fn trigger_set_timer(&mut self, minutes: u32, power_on: bool) {
+        if let Some(dev) = self.selected_device().cloned() {
+            let mins = minutes.clamp(1, 1440);
+            let target = Local::now() + ChronoDuration::minutes(i64::from(mins));
+            let hour = target.hour();
+            let minute = target.minute();
+            let weekday_sun0 = target.weekday().num_days_from_sunday() as usize;
+            let target_label = format!("{hour:02}:{minute:02}");
+
+            self.busy = true;
+            self.is_error = false;
+            self.status_message = format!("Programando temporizador para las {target_label}...");
+            let _ = self.cmd_tx.send(WorkerCmd::SetTimer {
+                device: dev,
+                power_on,
+                hour,
+                minute,
+                weekday_sun0,
+                minutes_from_now: u64::from(mins),
+                target_label,
+            });
+        }
+    }
+
+    fn trigger_cancel_timer(&mut self) {
+        if let Some(timer) = self.active_timer.take() {
+            if timer.on_device
+                && let Some(dev) = self.selected_device().cloned()
+            {
+                self.busy = true;
+                self.status_message = "Cancelando temporizador...".to_string();
+                let _ = self.cmd_tx.send(WorkerCmd::CancelTimer {
+                    device: dev,
+                    power_on: timer.power_on,
+                    hour: timer.hour,
+                    minute: timer.minute,
+                    weekday_sun0: timer.weekday_sun0,
+                });
+            } else {
+                self.is_error = false;
+                self.status_message = "Temporizador cancelado".to_string();
+            }
+        }
+    }
+
+    fn poll_tray(&mut self, ctx: &egui::Context) {
+        while let Ok(action) = self.tray_rx.try_recv() {
+            match action {
+                TrayAction::ToggleWindow => {
+                    self.window_visible = !self.window_visible;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(self.window_visible));
+                    if self.window_visible {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                    }
+                    self.sync_tray();
+                }
+                TrayAction::TogglePower => {
+                    if let Some(mut st) = self.status.clone() {
+                        st.power = !st.power;
+                        self.status = Some(st.clone());
+                        self.send_cmd(vec![("Pow", i64::from(st.power))]);
+                        self.sync_tray();
+                    }
+                }
+                TrayAction::Refresh => {
+                    self.trigger_refresh();
+                }
+                TrayAction::Quit => {
+                    self.allow_close = true;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
+        }
+    }
+
+    fn check_active_timer(&mut self) {
+        let expired = self
+            .active_timer
+            .as_ref()
+            .is_some_and(|t| Instant::now() >= t.deadline);
+        if expired && let Some(timer) = self.active_timer.take() {
+            if !timer.on_device {
+                // App-side fallback timer executes power command now
+                self.send_cmd(vec![("Pow", i64::from(timer.power_on))]);
+            } else {
+                // Device-side timer should have triggered; refresh status
+                self.trigger_refresh();
+            }
         }
     }
 
@@ -222,6 +444,7 @@ impl GreeRemoteApp {
                         self.last_refresh = Instant::now();
                         self.is_error = false;
                         self.status_message = "Conectado".to_string();
+                        self.sync_tray();
                     }
                 }
                 WorkerEvent::StatusResult(_, Err(e)) => {
@@ -238,6 +461,18 @@ impl GreeRemoteApp {
                     self.is_error = true;
                     self.status_message = format!("Error enviando comando: {e}");
                 }
+                WorkerEvent::TimerSetResult { timer, message } => {
+                    self.busy = false;
+                    self.is_error = false;
+                    self.active_timer = Some(timer);
+                    self.status_message = message;
+                }
+                WorkerEvent::TimerCancelled(msg) => {
+                    self.busy = false;
+                    self.is_error = false;
+                    self.active_timer = None;
+                    self.status_message = msg;
+                }
             }
         }
     }
@@ -245,7 +480,21 @@ impl GreeRemoteApp {
 
 impl eframe::App for GreeRemoteApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if ctx.input(|i| i.viewport().close_requested())
+            && self.tray.is_some()
+            && self.minimize_to_tray
+            && !self.allow_close
+        {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            self.window_visible = false;
+            self.sync_tray();
+            return;
+        }
+
+        self.poll_tray(ctx);
         self.poll_events();
+        self.check_active_timer();
 
         if self.auto_refresh
             && !self.busy
@@ -254,7 +503,7 @@ impl eframe::App for GreeRemoteApp {
         {
             self.trigger_refresh();
         }
-        if self.auto_refresh && self.selected_device().is_some() {
+        if (self.auto_refresh && self.selected_device().is_some()) || self.active_timer.is_some() {
             ctx.request_repaint_after(Duration::from_secs(2));
         }
 
@@ -338,6 +587,16 @@ impl eframe::App for GreeRemoteApp {
                         }
                         if widgets::header_icon_button(
                             ui,
+                            Icon::Timer,
+                            "Temporizador de encendido / apagado",
+                            self.selected_device().is_some(),
+                            self.show_timer || self.active_timer.is_some(),
+                            accent,
+                        ) {
+                            self.show_timer = !self.show_timer;
+                        }
+                        if widgets::header_icon_button(
+                            ui,
                             Icon::Scan,
                             "Escanear red local",
                             !self.busy,
@@ -386,7 +645,20 @@ impl eframe::App for GreeRemoteApp {
                     }
 
                     let footer_text = if !self.is_error && !self.busy {
-                        if let Some(dev) = self.selected_device() {
+                        if let Some(ref timer) = self.active_timer {
+                            let rem_secs = timer
+                                .deadline
+                                .saturating_duration_since(Instant::now())
+                                .as_secs();
+                            let rem_h = rem_secs / 3600;
+                            let rem_m = (rem_secs % 3600) / 60;
+                            let action = if timer.power_on { "Encender" } else { "Apagar" };
+                            let where_str = if timer.on_device { "equipo" } else { "app" };
+                            format!(
+                                "{action} a las {} ({rem_h}h {rem_m:02}m · {where_str})",
+                                timer.target_time_label
+                            )
+                        } else if let Some(dev) = self.selected_device() {
                             let auto_str = if self.auto_refresh { " · Auto 10s" } else { "" };
                             format!(
                                 "{} · {} · {}{}",
@@ -442,6 +714,9 @@ impl eframe::App for GreeRemoteApp {
 
                                 ui.separator();
                                 ui.checkbox(&mut self.auto_refresh, "Auto-actualizar (10s)");
+                                if self.tray.is_some() {
+                                    ui.checkbox(&mut self.minimize_to_tray, "Minimizar a bandeja");
+                                }
                             });
 
                             if self.devices.len() > 1 {
@@ -470,6 +745,86 @@ impl eframe::App for GreeRemoteApp {
                                     self.status = None;
                                     self.trigger_refresh();
                                 }
+                            }
+                        });
+                        ui.add_space(10.0);
+                    }
+
+                    // Collapsible Timer / Schedule Panel
+                    if self.show_timer && self.selected_device().is_some() {
+                        theme::card_frame().show(ui, |ui| {
+                            ui.set_min_width(ui.available_width());
+                            ui.horizontal(|ui| {
+                                let (ir, _) =
+                                    ui.allocate_exact_size(vec2(18.0, 18.0), egui::Sense::hover());
+                                draw_icon(ui.painter(), ir.center(), 7.5, Icon::Timer, accent);
+                                ui.label(
+                                    RichText::new("Temporizador")
+                                        .size(14.0)
+                                        .strong()
+                                        .color(TEXT_PRIMARY),
+                                );
+                            });
+                            ui.add_space(6.0);
+
+                            if let Some(timer) = self.active_timer.clone() {
+                                let rem_secs = timer
+                                    .deadline
+                                    .saturating_duration_since(Instant::now())
+                                    .as_secs();
+                                let rem_h = rem_secs / 3600;
+                                let rem_m = (rem_secs % 3600) / 60;
+                                let action = if timer.power_on { "Encender" } else { "Apagar" };
+                                let mode_str = if timer.on_device {
+                                    "guardado en el aire"
+                                } else {
+                                    "activo en segundo plano"
+                                };
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.label(
+                                        RichText::new(format!(
+                                            "{action} a las {} (en {rem_h}h {rem_m:02}m · {mode_str})",
+                                            timer.target_time_label
+                                        ))
+                                        .color(accent),
+                                    );
+                                    if ui
+                                        .add_enabled(!self.busy, egui::Button::new("Cancelar"))
+                                        .clicked()
+                                    {
+                                        self.trigger_cancel_timer();
+                                    }
+                                });
+                            } else {
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.selectable_value(&mut self.timer_power_on, false, "Apagar");
+                                    ui.selectable_value(&mut self.timer_power_on, true, "Encender");
+                                    ui.separator();
+                                    for (mins, lbl) in
+                                        [(30u32, "30m"), (60, "1h"), (120, "2h"), (180, "3h")]
+                                    {
+                                        if ui
+                                            .selectable_label(self.timer_minutes == mins, lbl)
+                                            .clicked()
+                                        {
+                                            self.timer_minutes = mins;
+                                        }
+                                    }
+                                    ui.add(
+                                        egui::DragValue::new(&mut self.timer_minutes)
+                                            .range(1..=1440)
+                                            .suffix(" min"),
+                                    );
+                                    if ui
+                                        .add_enabled(!self.busy, egui::Button::new("Programar"))
+                                        .clicked()
+                                    {
+                                        self.trigger_set_timer(
+                                            self.timer_minutes,
+                                            self.timer_power_on,
+                                        );
+                                    }
+                                });
                             }
                         });
                         ui.add_space(10.0);
