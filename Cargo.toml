@@ -19,6 +19,10 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 ksni = { version = "0.3", default-features = false, features = ["async-io", "blocking"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
+tray-icon = "0.21"
+image = { version = "0.25", default-features = false, features = ["png"] }
+
 [profile.release]
 lto = true
 codegen-units = 1
