@@ -25,7 +25,7 @@ pub const GCM_AAD: &[u8] = b"qualcomm-test";
 type Aes128EcbEnc = ecb::Encryptor<Aes128>;
 type Aes128EcbDec = ecb::Decryptor<Aes128>;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum EncryptionMode {
     Ecb,
     Gcm,

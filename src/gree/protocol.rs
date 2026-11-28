@@ -81,7 +81,7 @@ pub struct CmdResponsePack {
     pub r: i32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[allow(dead_code)]
 pub struct DeviceInfo {
     pub ip: Ipv4Addr,

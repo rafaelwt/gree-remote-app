@@ -9,6 +9,7 @@ use crate::gree::client;
 use crate::gree::protocol::{
     AcMode, AcStatus, DeviceInfo, HorizontalSwing, VerticalSwing,
 };
+use crate::gree::storage;
 use crate::ui::icons::{Icon, draw_icon};
 use crate::ui::theme::{
     self, BG_DEEP, BORDER, CARD_BG, CARD_INNER, ERROR, POWER_ON, TEXT_MUTED, TEXT_PRIMARY,
@@ -16,6 +17,7 @@ use crate::ui::theme::{
 use crate::ui::widgets;
 
 enum WorkerCmd {
+    ProbeCached(DeviceInfo),
     Scan(Option<Ipv4Addr>),
     Refresh(DeviceInfo),
     SetParams {
@@ -25,6 +27,7 @@ enum WorkerCmd {
 }
 
 enum WorkerEvent {
+    FallbackScanning(String),
     ScanResult(Result<Vec<DeviceInfo>, String>),
     StatusResult(String, Result<AcStatus, String>),
     CommandResult(Result<(), String>),
@@ -58,8 +61,34 @@ impl GreeRemoteApp {
         thread::spawn(move || {
             while let Ok(cmd) = cmd_rx.recv() {
                 match cmd {
+                    WorkerCmd::ProbeCached(dev) => {
+                        let id = dev.id.clone();
+                        match client::get_status(&dev) {
+                            Ok(st) => {
+                                let _ = evt_tx.send(WorkerEvent::StatusResult(id, Ok(st)));
+                                ctx.request_repaint();
+                            }
+                            Err(_) => {
+                                // Cached IP/key didn't respond — fall back to full network scan
+                                let _ = evt_tx.send(WorkerEvent::FallbackScanning(format!(
+                                    "{} no respondió; escaneando red...",
+                                    dev.ip
+                                )));
+                                ctx.request_repaint();
+                                let res = client::scan_and_bind(None);
+                                if let Ok(ref devs) = res {
+                                    let _ = storage::save_devices(devs);
+                                }
+                                let _ = evt_tx.send(WorkerEvent::ScanResult(res));
+                                ctx.request_repaint();
+                            }
+                        }
+                    }
                     WorkerCmd::Scan(manual_ip) => {
                         let res = client::scan_and_bind(manual_ip);
+                        if let Ok(ref devs) = res {
+                            let _ = storage::save_devices(devs);
+                        }
                         let _ = evt_tx.send(WorkerEvent::ScanResult(res));
                         ctx.request_repaint();
                     }
@@ -85,10 +114,17 @@ impl GreeRemoteApp {
             }
         });
 
+        let cached_devices = storage::load_devices();
+        let initial_msg = if let Some(first) = cached_devices.first() {
+            format!("Conectando a {}...", first.ip)
+        } else {
+            "Escaneando la red local...".to_string()
+        };
+
         let app = Self {
             cmd_tx,
             evt_rx,
-            devices: Vec::new(),
+            devices: cached_devices,
             selected_idx: 0,
             status: None,
             manual_ip: String::new(),
@@ -96,10 +132,14 @@ impl GreeRemoteApp {
             busy: true,
             auto_refresh: true,
             last_refresh: Instant::now(),
-            status_message: "Escaneando la red local...".to_string(),
+            status_message: initial_msg,
             is_error: false,
         };
-        let _ = app.cmd_tx.send(WorkerCmd::Scan(None));
+        if let Some(first) = app.devices.first().cloned() {
+            let _ = app.cmd_tx.send(WorkerCmd::ProbeCached(first));
+        } else {
+            let _ = app.cmd_tx.send(WorkerCmd::Scan(None));
+        }
         app
     }
 
@@ -148,6 +188,11 @@ impl GreeRemoteApp {
     fn poll_events(&mut self) {
         while let Ok(evt) = self.evt_rx.try_recv() {
             match evt {
+                WorkerEvent::FallbackScanning(msg) => {
+                    self.busy = true;
+                    self.is_error = false;
+                    self.status_message = msg;
+                }
                 WorkerEvent::ScanResult(Ok(devs)) => {
                     self.busy = false;
                     if devs.is_empty() {
