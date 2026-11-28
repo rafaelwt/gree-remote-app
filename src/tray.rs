@@ -47,20 +47,25 @@ mod platform {
     impl GreeTray {
         fn send(&self, action: TrayAction) {
             let _ = self.tx.send(action);
+            let on_wayland = std::env::var_os("WAYLAND_DISPLAY").is_some();
             if matches!(action, TrayAction::ToggleWindow) {
                 let show = !self.state.window_visible;
                 self.ctx
                     .send_viewport_cmd(egui::ViewportCommand::Visible(show));
-                self.ctx
-                    .send_viewport_cmd(egui::ViewportCommand::Minimized(!show));
+                if on_wayland {
+                    self.ctx
+                        .send_viewport_cmd(egui::ViewportCommand::Minimized(!show));
+                }
                 if show {
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
                 }
             } else if matches!(action, TrayAction::Quit) {
                 self.ctx
                     .send_viewport_cmd(egui::ViewportCommand::Visible(true));
-                self.ctx
-                    .send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                if on_wayland {
+                    self.ctx
+                        .send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                }
             }
             self.ctx.request_repaint();
         }
