@@ -60,12 +60,7 @@ mod platform {
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
                 }
             } else if matches!(action, TrayAction::Quit) {
-                self.ctx
-                    .send_viewport_cmd(egui::ViewportCommand::Visible(true));
-                if on_wayland {
-                    self.ctx
-                        .send_viewport_cmd(egui::ViewportCommand::Minimized(false));
-                }
+                std::process::exit(0);
             }
             self.ctx.request_repaint();
         }
@@ -275,8 +270,7 @@ mod platform {
                 } else if event.id == refresh_id {
                     Some(TrayAction::Refresh)
                 } else if event.id == quit_id {
-                    ctx_menu.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-                    Some(TrayAction::Quit)
+                    std::process::exit(0);
                 } else {
                     None
                 };
