@@ -23,6 +23,14 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 tray-icon = "0.21"
 image = { version = "0.25", default-features = false, features = ["png"] }
 
+[target.'cfg(target_os = "windows")'.dependencies]
+raw-window-handle = "0.6"
+windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+
+[build-dependencies]
+image = { version = "0.25", default-features = false, features = ["png", "ico"] }
+winresource = "0.1"
+
 [profile.release]
 lto = true
 codegen-units = 1

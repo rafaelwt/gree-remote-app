@@ -1,5 +1,6 @@
 use std::net::Ipv4Addr;
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -11,7 +12,7 @@ use crate::gree::protocol::{
     AcMode, AcStatus, DeviceInfo, HorizontalSwing, VerticalSwing,
 };
 use crate::gree::storage;
-use crate::tray::{TrayAction, TrayController, TrayState};
+use crate::tray::{TrayAction, TrayCommandHandler, TrayController, TrayState};
 use crate::ui::icons::{Icon, draw_icon};
 use crate::ui::theme::{
     self, BG_DEEP, BORDER, CARD_BG, CARD_INNER, ERROR, POWER_ON, TEXT_MUTED, TEXT_PRIMARY,
@@ -72,6 +73,8 @@ pub struct GreeRemoteApp {
     evt_rx: Receiver<WorkerEvent>,
     tray_rx: Receiver<TrayAction>,
     tray: Option<TrayController>,
+    /// Device the tray acts on; shared so tray actions work while `update` is paused.
+    tray_device: Arc<Mutex<Option<DeviceInfo>>>,
 
     devices: Vec<DeviceInfo>,
     selected_idx: usize,
@@ -102,7 +105,26 @@ impl GreeRemoteApp {
         let (cmd_tx, cmd_rx) = mpsc::channel::<WorkerCmd>();
         let (evt_tx, evt_rx) = mpsc::channel::<WorkerEvent>();
         let (tray_tx, tray_rx) = mpsc::channel::<TrayAction>();
-        let tray = TrayController::spawn(tray_tx, cc.egui_ctx.clone());
+        let tray_device: Arc<Mutex<Option<DeviceInfo>>> = Arc::new(Mutex::new(None));
+        let handler: TrayCommandHandler = {
+            let cmd_tx = cmd_tx.clone();
+            let tray_device = Arc::clone(&tray_device);
+            Arc::new(move |action| {
+                let Some(device) = tray_device.lock().ok().and_then(|d| d.clone()) else {
+                    return;
+                };
+                let cmd = match action {
+                    TrayAction::SetPower(on) => WorkerCmd::SetParams {
+                        device,
+                        params: vec![("Pow".to_string(), i64::from(on))],
+                    },
+                    TrayAction::Refresh => WorkerCmd::Refresh(device),
+                    TrayAction::ToggleWindow | TrayAction::Quit => return,
+                };
+                let _ = cmd_tx.send(cmd);
+            })
+        };
+        let tray = TrayController::spawn(cc, tray_tx, handler);
         let ctx = cc.egui_ctx.clone();
 
         thread::spawn(move || {
@@ -231,6 +253,7 @@ impl GreeRemoteApp {
             evt_rx,
             tray_rx,
             tray,
+            tray_device,
             devices: cached_devices,
             selected_idx: 0,
             status: None,
@@ -285,6 +308,9 @@ impl GreeRemoteApp {
     }
 
     fn sync_tray(&self) {
+        if let Ok(mut dev) = self.tray_device.lock() {
+            *dev = self.selected_device().cloned();
+        }
         if let Some(ref tray) = self.tray {
             let device_name = self
                 .selected_device()
@@ -361,17 +387,8 @@ impl GreeRemoteApp {
                     }
                     self.sync_tray();
                 }
-                TrayAction::TogglePower => {
-                    if let Some(mut st) = self.status.clone() {
-                        st.power = !st.power;
-                        self.status = Some(st.clone());
-                        self.send_cmd(vec![("Pow", i64::from(st.power))]);
-                        self.sync_tray();
-                    }
-                }
-                TrayAction::Refresh => {
-                    self.trigger_refresh();
-                }
+                // Executed directly by the tray's command handler.
+                TrayAction::SetPower(_) | TrayAction::Refresh => {}
                 TrayAction::Quit => {
                     self.allow_close = true;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);

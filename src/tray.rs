@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::sync::mpsc::Sender;
 
 use eframe::egui;
@@ -5,10 +6,18 @@ use eframe::egui;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrayAction {
     ToggleWindow,
-    TogglePower,
+    SetPower(bool),
     Refresh,
+    // Only routed through the enum on Linux; Windows/macOS exit directly.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     Quit,
 }
+
+/// Executes device actions (power / refresh) straight from the tray handler.
+///
+/// These must not depend on `eframe::App::update`: on Windows a hidden window
+/// receives no `WM_PAINT`, so `update` never runs while the app lives in the tray.
+pub type TrayCommandHandler = Arc<dyn Fn(TrayAction) + Send + Sync>;
 
 #[derive(Debug, Clone)]
 pub struct TrayState {
@@ -40,27 +49,38 @@ mod platform {
     struct GreeTray {
         tx: Sender<TrayAction>,
         ctx: egui::Context,
+        handler: TrayCommandHandler,
         state: TrayState,
         icon_pixmap: Vec<ksni::Icon>,
     }
 
     impl GreeTray {
-        fn send(&self, action: TrayAction) {
+        fn send(&mut self, action: TrayAction) {
+            match action {
+                TrayAction::SetPower(on) => {
+                    (self.handler)(action);
+                    self.state.power = Some(on);
+                    return;
+                }
+                TrayAction::Refresh => {
+                    (self.handler)(action);
+                    return;
+                }
+                TrayAction::Quit => std::process::exit(0),
+                TrayAction::ToggleWindow => {}
+            }
+
             let _ = self.tx.send(action);
             let on_wayland = std::env::var_os("WAYLAND_DISPLAY").is_some();
-            if matches!(action, TrayAction::ToggleWindow) {
-                let show = !self.state.window_visible;
+            let show = !self.state.window_visible;
+            self.ctx
+                .send_viewport_cmd(egui::ViewportCommand::Visible(show));
+            if on_wayland {
                 self.ctx
-                    .send_viewport_cmd(egui::ViewportCommand::Visible(show));
-                if on_wayland {
-                    self.ctx
-                        .send_viewport_cmd(egui::ViewportCommand::Minimized(!show));
-                }
-                if show {
-                    self.ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-                }
-            } else if matches!(action, TrayAction::Quit) {
-                std::process::exit(0);
+                    .send_viewport_cmd(egui::ViewportCommand::Minimized(!show));
+            }
+            if show {
+                self.ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
             }
             self.ctx.request_repaint();
         }
@@ -125,7 +145,11 @@ mod platform {
                 StandardItem {
                     label: power_label.to_string(),
                     enabled: self.state.power.is_some(),
-                    activate: Box::new(|this: &mut Self| this.send(TrayAction::TogglePower)),
+                    activate: Box::new(|this: &mut Self| {
+                        if let Some(p) = this.state.power {
+                            this.send(TrayAction::SetPower(!p));
+                        }
+                    }),
                     ..Default::default()
                 }
                 .into(),
@@ -174,10 +198,15 @@ mod platform {
     }
 
     impl TrayController {
-        pub fn spawn(tx: Sender<TrayAction>, ctx: egui::Context) -> Option<Self> {
+        pub fn spawn(
+            cc: &eframe::CreationContext<'_>,
+            tx: Sender<TrayAction>,
+            handler: TrayCommandHandler,
+        ) -> Option<Self> {
             let tray = GreeTray {
                 tx,
-                ctx,
+                ctx: cc.egui_ctx.clone(),
+                handler,
                 state: TrayState::default(),
                 icon_pixmap: load_argb32_icon(),
             };
@@ -201,7 +230,7 @@ mod platform {
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 mod platform {
     use std::sync::{
-        Arc, Mutex,
+        Mutex,
         atomic::{AtomicBool, Ordering},
     };
 
@@ -221,65 +250,133 @@ mod platform {
         Icon::from_rgba(resized.into_raw(), w, h).ok()
     }
 
+    /// Native handle of the main window (Windows only). Used to show the window
+    /// again directly, because `update` does not run while it is hidden.
+    #[derive(Clone, Copy)]
+    struct NativeWindow(#[cfg_attr(not(target_os = "windows"), allow(dead_code))] Option<isize>);
+
+    impl NativeWindow {
+        #[cfg(target_os = "windows")]
+        fn from_cc(cc: &eframe::CreationContext<'_>) -> Self {
+            use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+            let hwnd = cc.window_handle().ok().and_then(|h| match h.as_raw() {
+                RawWindowHandle::Win32(w) => Some(w.hwnd.get()),
+                _ => None,
+            });
+            Self(hwnd)
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        fn from_cc(_cc: &eframe::CreationContext<'_>) -> Self {
+            Self(None)
+        }
+
+        #[cfg(target_os = "windows")]
+        #[allow(unsafe_code)]
+        fn show(self) {
+            use windows_sys::Win32::Foundation::HWND;
+            use windows_sys::Win32::UI::WindowsAndMessaging::{
+                IsIconic, SW_RESTORE, SW_SHOW, SetForegroundWindow, ShowWindow,
+            };
+            let Some(raw) = self.0 else { return };
+            let hwnd = raw as HWND;
+            // SAFETY: `hwnd` is the eframe root window, which lives for the whole
+            // process; tray events are dispatched on the UI thread that owns it.
+            unsafe {
+                let cmd = if IsIconic(hwnd) != 0 { SW_RESTORE } else { SW_SHOW };
+                ShowWindow(hwnd, cmd);
+                SetForegroundWindow(hwnd);
+            }
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        fn show(self) {}
+    }
+
+    fn toggle_window(
+        ctx: &egui::Context,
+        native: NativeWindow,
+        visible: &AtomicBool,
+        tx: &Mutex<Sender<TrayAction>>,
+    ) {
+        let show = !visible.load(Ordering::Relaxed);
+        if show {
+            // Show natively first so the window gets WM_PAINT and egui resumes;
+            // the viewport command below keeps winit's visibility flag in sync.
+            native.show();
+        }
+        visible.store(show, Ordering::Relaxed);
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(show));
+        if show {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
+        if let Ok(guard) = tx.lock() {
+            let _ = guard.send(TrayAction::ToggleWindow);
+        }
+        ctx.request_repaint();
+    }
+
     pub struct TrayController {
         tray: TrayIcon,
         show_item: MenuItem,
-        power_item: MenuItem,
+        power_on_item: MenuItem,
+        power_off_item: MenuItem,
         window_visible: Arc<AtomicBool>,
     }
 
     impl TrayController {
-        pub fn spawn(tx: Sender<TrayAction>, ctx: egui::Context) -> Option<Self> {
+        pub fn spawn(
+            cc: &eframe::CreationContext<'_>,
+            tx: Sender<TrayAction>,
+            handler: TrayCommandHandler,
+        ) -> Option<Self> {
+            let ctx = cc.egui_ctx.clone();
+            let native = NativeWindow::from_cc(cc);
+
             let show_item = MenuItem::new("Ocultar ventana", true, None);
-            let power_item = MenuItem::new("Encender / Apagar aire", false, None);
+            let power_on_item = MenuItem::new("Encender aire", false, None);
+            let power_off_item = MenuItem::new("Apagar aire", false, None);
             let refresh_item = MenuItem::new("Actualizar estado", true, None);
             let separator = PredefinedMenuItem::separator();
+            let separator2 = PredefinedMenuItem::separator();
             let quit_item = MenuItem::new("Salir", true, None);
 
             let menu = Menu::new();
             let _ = menu.append_items(&[
                 &show_item,
-                &power_item,
-                &refresh_item,
                 &separator,
+                &power_on_item,
+                &power_off_item,
+                &refresh_item,
+                &separator2,
                 &quit_item,
             ]);
 
             let show_id = show_item.id().clone();
-            let power_id = power_item.id().clone();
+            let power_on_id = power_on_item.id().clone();
+            let power_off_id = power_off_item.id().clone();
             let refresh_id = refresh_item.id().clone();
             let quit_id = quit_item.id().clone();
 
             let tx = Arc::new(Mutex::new(tx));
             let window_visible = Arc::new(AtomicBool::new(true));
 
-            // Menu click handler (Windows & macOS)
+            // Menu click handler: runs outside `App::update`, so every action here
+            // must work even while the window is hidden.
             let tx_menu = Arc::clone(&tx);
             let vis_menu = Arc::clone(&window_visible);
             let ctx_menu = ctx.clone();
             MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
-                let action = if event.id == show_id {
-                    let show = !vis_menu.load(Ordering::Relaxed);
-                    ctx_menu.send_viewport_cmd(egui::ViewportCommand::Visible(show));
-                    if show {
-                        ctx_menu.send_viewport_cmd(egui::ViewportCommand::Focus);
-                    }
-                    Some(TrayAction::ToggleWindow)
-                } else if event.id == power_id {
-                    Some(TrayAction::TogglePower)
+                if event.id == show_id {
+                    toggle_window(&ctx_menu, native, &vis_menu, &tx_menu);
+                } else if event.id == power_on_id {
+                    handler(TrayAction::SetPower(true));
+                } else if event.id == power_off_id {
+                    handler(TrayAction::SetPower(false));
                 } else if event.id == refresh_id {
-                    Some(TrayAction::Refresh)
+                    handler(TrayAction::Refresh);
                 } else if event.id == quit_id {
                     std::process::exit(0);
-                } else {
-                    None
-                };
-
-                if let Some(act) = action {
-                    if let Ok(guard) = tx_menu.lock() {
-                        let _ = guard.send(act);
-                    }
-                    ctx_menu.request_repaint();
                 }
             }));
 
@@ -295,15 +392,7 @@ mod platform {
                         ..
                     } = event
                 {
-                    let show = !vis_click.load(Ordering::Relaxed);
-                    ctx_click.send_viewport_cmd(egui::ViewportCommand::Visible(show));
-                    if show {
-                        ctx_click.send_viewport_cmd(egui::ViewportCommand::Focus);
-                    }
-                    if let Ok(guard) = tx_click.lock() {
-                        let _ = guard.send(TrayAction::ToggleWindow);
-                    }
-                    ctx_click.request_repaint();
+                    toggle_window(&ctx_click, native, &vis_click, &tx_click);
                 }
             }));
 
@@ -320,7 +409,8 @@ mod platform {
                 Ok(tray) => Some(Self {
                     tray,
                     show_item,
-                    power_item,
+                    power_on_item,
+                    power_off_item,
                     window_visible,
                 }),
                 Err(e) => {
@@ -341,13 +431,11 @@ mod platform {
             };
             self.show_item.set_text(show_label);
 
-            let power_label = match new_state.power {
-                Some(true) => "Apagar aire",
-                Some(false) => "Encender aire",
-                None => "Encender / Apagar aire",
-            };
-            self.power_item.set_text(power_label);
-            self.power_item.set_enabled(new_state.power.is_some());
+            // Fixed labels for power: they can't go stale while the window is
+            // hidden (the menu can only be relabelled from `update`).
+            let has_status = new_state.power.is_some();
+            self.power_on_item.set_enabled(has_status);
+            self.power_off_item.set_enabled(has_status);
 
             let mut tooltip = match (new_state.power, new_state.set_temp) {
                 (Some(true), Some(t)) => format!("Gree Remote · Encendido · {t}°C"),
@@ -369,7 +457,11 @@ mod platform {
     pub struct TrayController;
 
     impl TrayController {
-        pub fn spawn(_tx: Sender<TrayAction>, _ctx: egui::Context) -> Option<Self> {
+        pub fn spawn(
+            _cc: &eframe::CreationContext<'_>,
+            _tx: Sender<TrayAction>,
+            _handler: TrayCommandHandler,
+        ) -> Option<Self> {
             None
         }
 
