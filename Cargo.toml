@@ -13,3 +13,8 @@ ecb = "0.1"
 aes-gcm = "0.10"
 base64 = "0.22"
 if-addrs = "0.13"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

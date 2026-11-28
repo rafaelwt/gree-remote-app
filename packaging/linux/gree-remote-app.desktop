@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Gree Remote
+GenericName=Air Conditioner Remote Control
+Comment=Native Rust desktop remote control for Gree Smart Air Conditioners
+Exec=gree-remote-app
+Icon=gree-remote-app
+Terminal=false
+Categories=Utility;Network;
+Keywords=gree;ac;air conditioner;remote;smart home;
+StartupWMClass=gree-remote-app

@@ -93,6 +93,7 @@ fn step_pill_button(ui: &mut egui::Ui, icon: Icon, width: f32, enabled: bool) ->
 /// Compact split 2-column hero card (Option B):
 /// - Left: interactive 270° circular arc mini-dial (16..=30 °C)
 /// - Right: Power pill button, Ambient room temp readout, and `-` / `+` buttons
+///
 /// Returns `(committed_temp, power_toggled)`.
 pub fn compact_thermostat_hero(
     ui: &mut egui::Ui,
@@ -124,29 +125,30 @@ pub fn compact_thermostat_hero(
         let start_rad = start_deg.to_radians();
         let sweep_rad = sweep_deg.to_radians();
 
-        if enabled && (resp.dragged() || resp.clicked()) {
-            if let Some(pointer) = resp.interact_pointer_pos() {
-                let dx = pointer.x - center.x;
-                let dy = pointer.y - center.y;
-                let dist = (dx * dx + dy * dy).sqrt();
-                if dist > 20.0 {
-                    let mut deg = dy.atan2(dx).to_degrees();
-                    if deg < 0.0 {
-                        deg += 360.0;
-                    }
-                    let mut rel = deg - start_deg;
-                    if rel < 0.0 {
-                        rel += 360.0;
-                    }
-                    if rel <= sweep_deg + 25.0 || rel >= 335.0 {
-                        let clamped = if rel >= 335.0 {
-                            0.0
-                        } else {
-                            (rel / sweep_deg).clamp(0.0, 1.0)
-                        };
-                        let mapped = (16.0 + clamped * 14.0).round() as i64;
-                        *set_temp = mapped.clamp(16, 30);
-                    }
+        if enabled
+            && (resp.dragged() || resp.clicked())
+            && let Some(pointer) = resp.interact_pointer_pos()
+        {
+            let dx = pointer.x - center.x;
+            let dy = pointer.y - center.y;
+            let dist = (dx * dx + dy * dy).sqrt();
+            if dist > 20.0 {
+                let mut deg = dy.atan2(dx).to_degrees();
+                if deg < 0.0 {
+                    deg += 360.0;
+                }
+                let mut rel = deg - start_deg;
+                if rel < 0.0 {
+                    rel += 360.0;
+                }
+                if rel <= sweep_deg + 25.0 || rel >= 335.0 {
+                    let clamped = if rel >= 335.0 {
+                        0.0
+                    } else {
+                        (rel / sweep_deg).clamp(0.0, 1.0)
+                    };
+                    let mapped = (16.0 + clamped * 14.0).round() as i64;
+                    *set_temp = mapped.clamp(16, 30);
                 }
             }
         }

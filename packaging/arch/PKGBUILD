@@ -1,0 +1,40 @@
+# Maintainer: rafaelwt <rafael.wt@gmail.com>
+pkgname=gree-remote-app
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="100% Rust + egui native desktop remote control for Gree Smart Air Conditioners"
+arch=('x86_64' 'aarch64')
+url="https://github.com/rafaelwt/gree-remote-app"
+license=('MIT')
+depends=('gcc-libs' 'glibc' 'libxkbcommon' 'wayland' 'libx11')
+makedepends=('cargo' 'git')
+source=("git+${url}.git")
+sha256sums=('SKIP')
+
+prepare() {
+  cd "$pkgname"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')" || cargo fetch
+}
+
+build() {
+  cd "$pkgname"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  cargo build --release --offline
+}
+
+check() {
+  cd "$pkgname"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  cargo test --offline
+}
+
+package() {
+  cd "$pkgname"
+  install -Dm755 "target/release/$pkgname" "$pkgdir/usr/bin/$pkgname"
+  install -Dm644 "assets/icon.png" "$pkgdir/usr/share/icons/hicolor/256x256/apps/$pkgname.png"
+  install -Dm644 "packaging/linux/$pkgname.desktop" "$pkgdir/usr/share/applications/$pkgname.desktop"
+  install -Dm644 "LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
