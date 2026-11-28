@@ -203,7 +203,172 @@ mod platform {
     }
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+mod platform {
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    };
+
+    use tray_icon::{
+        Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent,
+        menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
+    };
+
+    use super::*;
+
+    fn load_rgba_icon() -> Option<Icon> {
+        let img = image::load_from_memory(include_bytes!("../assets/icon.png")).ok()?;
+        let resized = img
+            .resize_exact(32, 32, image::imageops::FilterType::Lanczos3)
+            .to_rgba8();
+        let (w, h) = resized.dimensions();
+        Icon::from_rgba(resized.into_raw(), w, h).ok()
+    }
+
+    pub struct TrayController {
+        tray: TrayIcon,
+        show_item: MenuItem,
+        power_item: MenuItem,
+        window_visible: Arc<AtomicBool>,
+    }
+
+    impl TrayController {
+        pub fn spawn(tx: Sender<TrayAction>, ctx: egui::Context) -> Option<Self> {
+            let show_item = MenuItem::new("Ocultar ventana", true, None);
+            let power_item = MenuItem::new("Encender / Apagar aire", false, None);
+            let refresh_item = MenuItem::new("Actualizar estado", true, None);
+            let separator = PredefinedMenuItem::separator();
+            let quit_item = MenuItem::new("Salir", true, None);
+
+            let menu = Menu::new();
+            let _ = menu.append_items(&[
+                &show_item,
+                &power_item,
+                &refresh_item,
+                &separator,
+                &quit_item,
+            ]);
+
+            let show_id = show_item.id().clone();
+            let power_id = power_item.id().clone();
+            let refresh_id = refresh_item.id().clone();
+            let quit_id = quit_item.id().clone();
+
+            let tx = Arc::new(Mutex::new(tx));
+            let window_visible = Arc::new(AtomicBool::new(true));
+
+            // Menu click handler (Windows & macOS)
+            let tx_menu = Arc::clone(&tx);
+            let vis_menu = Arc::clone(&window_visible);
+            let ctx_menu = ctx.clone();
+            MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
+                let action = if event.id == show_id {
+                    let show = !vis_menu.load(Ordering::Relaxed);
+                    ctx_menu.send_viewport_cmd(egui::ViewportCommand::Visible(show));
+                    if show {
+                        ctx_menu.send_viewport_cmd(egui::ViewportCommand::Focus);
+                    }
+                    Some(TrayAction::ToggleWindow)
+                } else if event.id == power_id {
+                    Some(TrayAction::TogglePower)
+                } else if event.id == refresh_id {
+                    Some(TrayAction::Refresh)
+                } else if event.id == quit_id {
+                    ctx_menu.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                    Some(TrayAction::Quit)
+                } else {
+                    None
+                };
+
+                if let Some(act) = action {
+                    if let Ok(guard) = tx_menu.lock() {
+                        let _ = guard.send(act);
+                    }
+                    ctx_menu.request_repaint();
+                }
+            }));
+
+            // Left-click tray icon toggles window on Windows (macOS opens menu on left-click)
+            let tx_click = Arc::clone(&tx);
+            let vis_click = Arc::clone(&window_visible);
+            let ctx_click = ctx;
+            TrayIconEvent::set_event_handler(Some(move |event: TrayIconEvent| {
+                if cfg!(target_os = "windows")
+                    && let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                {
+                    let show = !vis_click.load(Ordering::Relaxed);
+                    ctx_click.send_viewport_cmd(egui::ViewportCommand::Visible(show));
+                    if show {
+                        ctx_click.send_viewport_cmd(egui::ViewportCommand::Focus);
+                    }
+                    if let Ok(guard) = tx_click.lock() {
+                        let _ = guard.send(TrayAction::ToggleWindow);
+                    }
+                    ctx_click.request_repaint();
+                }
+            }));
+
+            let mut builder = TrayIconBuilder::new()
+                .with_menu(Box::new(menu))
+                .with_tooltip("Gree Remote")
+                .with_menu_on_left_click(cfg!(target_os = "macos"));
+
+            if let Some(icon) = load_rgba_icon() {
+                builder = builder.with_icon(icon);
+            }
+
+            match builder.build() {
+                Ok(tray) => Some(Self {
+                    tray,
+                    show_item,
+                    power_item,
+                    window_visible,
+                }),
+                Err(e) => {
+                    eprintln!("System tray unavailable: {e}");
+                    None
+                }
+            }
+        }
+
+        pub fn update(&self, new_state: TrayState) {
+            self.window_visible
+                .store(new_state.window_visible, Ordering::Relaxed);
+
+            let show_label = if new_state.window_visible {
+                "Ocultar ventana"
+            } else {
+                "Mostrar ventana"
+            };
+            self.show_item.set_text(show_label);
+
+            let power_label = match new_state.power {
+                Some(true) => "Apagar aire",
+                Some(false) => "Encender aire",
+                None => "Encender / Apagar aire",
+            };
+            self.power_item.set_text(power_label);
+            self.power_item.set_enabled(new_state.power.is_some());
+
+            let mut tooltip = match (new_state.power, new_state.set_temp) {
+                (Some(true), Some(t)) => format!("Gree Remote · Encendido · {t}°C"),
+                (Some(false), _) => "Gree Remote · Apagado".to_string(),
+                _ => "Gree Remote".to_string(),
+            };
+            if let Some(r) = new_state.room_temp {
+                tooltip.push_str(&format!(" (Ambiente {r}°C)"));
+            }
+            let _ = self.tray.set_tooltip(Some(tooltip));
+        }
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
 mod platform {
     use super::*;
 
