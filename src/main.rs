@@ -42,11 +42,18 @@ fn main() -> eframe::Result<()> {
         return Ok(());
     }
 
+    let mut viewport = eframe::egui::ViewportBuilder::default()
+        .with_app_id("gree-remote-app")
+        .with_inner_size([494.0, 750.0])
+        .with_min_inner_size([460.0, 680.0])
+        .with_title("Gree Remote");
+
+    if let Ok(icon) = eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon.png")) {
+        viewport = viewport.with_icon(std::sync::Arc::new(icon));
+    }
+
     let options = eframe::NativeOptions {
-        viewport: eframe::egui::ViewportBuilder::default()
-            .with_inner_size([494.0, 750.0])
-            .with_min_inner_size([460.0, 680.0])
-            .with_title("Gree Remote"),
+        viewport,
         ..Default::default()
     };
 

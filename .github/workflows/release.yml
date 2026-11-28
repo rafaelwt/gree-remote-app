@@ -1,0 +1,130 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    name: Build Linux (x86_64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux GUI dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev libgtk-3-dev
+      - name: Run tests
+        run: cargo test
+      - name: Build release binary
+        run: cargo build --release
+      - name: Package Linux archive
+        run: |
+          mkdir -p dist/gree-remote-app-linux-x86_64
+          cp target/release/gree-remote-app dist/gree-remote-app-linux-x86_64/
+          cp assets/icon.png dist/gree-remote-app-linux-x86_64/
+          cp packaging/linux/gree-remote-app.desktop dist/gree-remote-app-linux-x86_64/
+          cp packaging/linux/install-user.sh dist/gree-remote-app-linux-x86_64/
+          cp LICENSE README.md dist/gree-remote-app-linux-x86_64/
+          tar -czf gree-remote-app-linux-x86_64.tar.gz -C dist gree-remote-app-linux-x86_64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-x86_64
+          path: gree-remote-app-linux-x86_64.tar.gz
+
+  build-windows:
+    name: Build Windows (x86_64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run tests
+        run: cargo test
+      - name: Build release binary
+        run: cargo build --release
+      - name: Package Windows executable
+        shell: pwsh
+        run: |
+          Copy-Item target/release/gree-remote-app.exe gree-remote-app-windows-x86_64.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x86_64
+          path: gree-remote-app-windows-x86_64.exe
+
+  build-macos:
+    name: Build macOS (Apple Silicon)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run tests
+        run: cargo test
+      - name: Build release binary
+        run: cargo build --release
+      - name: Create .app bundle and .dmg
+        run: |
+          APP_DIR="dist/Gree Remote.app"
+          mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
+          cp target/release/gree-remote-app "$APP_DIR/Contents/MacOS/gree-remote-app"
+
+          # Convert PNG icon to macOS .icns
+          mkdir -p icon.iconset
+          sips -z 16 16     assets/icon.png --out icon.iconset/icon_16x16.png
+          sips -z 32 32     assets/icon.png --out icon.iconset/icon_16x16@2x.png
+          sips -z 32 32     assets/icon.png --out icon.iconset/icon_32x32.png
+          sips -z 64 64     assets/icon.png --out icon.iconset/icon_32x32@2x.png
+          sips -z 128 128   assets/icon.png --out icon.iconset/icon_128x128.png
+          sips -z 256 256   assets/icon.png --out icon.iconset/icon_128x128@2x.png
+          sips -z 256 256   assets/icon.png --out icon.iconset/icon_256x256.png
+          iconutil -c icns icon.iconset -o "$APP_DIR/Contents/Resources/icon.icns"
+
+          cat > "$APP_DIR/Contents/Info.plist" << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleExecutable</key>
+            <string>gree-remote-app</string>
+            <key>CFBundleIdentifier</key>
+            <string>com.rafaelwt.gree-remote-app</string>
+            <key>CFBundleName</key>
+            <string>Gree Remote</string>
+            <key>CFBundleIconFile</key>
+            <string>icon.icns</string>
+            <key>CFBundleVersion</key>
+            <string>0.1.0</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+            <key>NSHighResolutionCapable</key>
+            <true/>
+          </dict>
+          </plist>
+          EOF
+
+          hdiutil create -volname "Gree Remote" -srcfolder "$APP_DIR" -ov -format UDZO gree-remote-app-macos-arm64.dmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64
+          path: gree-remote-app-macos-arm64.dmg
+
+  release:
+    name: Publish GitHub Release
+    needs: [build-linux, build-windows, build-macos]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: release-assets/*

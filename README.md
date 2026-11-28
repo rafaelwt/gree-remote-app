@@ -89,10 +89,27 @@ src/
 
 ### Installation & Run
 
+**Pre-built binaries (GitHub Releases):** Download the latest release for **Linux** (`.tar.gz`), **Windows** (`.exe`), or **macOS** (`.dmg`) from the [Releases](https://github.com/rafaelwt/gree-remote-app/releases) page.
+
+**From source:**
+
 ```bash
 git clone https://github.com/rafaelwt/gree-remote-app.git
 cd gree-remote-app
 cargo run --release
+```
+
+**Install on Linux / KDE Plasma (with desktop launcher & icon):**
+
+```bash
+./packaging/linux/install-user.sh
+```
+
+**Install on Arch Linux / CachyOS (`PKGBUILD`):**
+
+```bash
+cd packaging/arch
+makepkg -si
 ```
 
 ### Verify
