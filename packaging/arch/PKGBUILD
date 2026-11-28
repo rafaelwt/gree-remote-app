@@ -1,6 +1,6 @@
 # Maintainer: rafaelwt <rafael.wt@gmail.com>
 pkgname=gree-remote-app
-pkgver=0.2.0
+pkgver=0.2.1
 pkgrel=1
 pkgdesc="100% Rust + egui native desktop remote control for Gree Smart Air Conditioners"
 arch=('x86_64' 'aarch64')

@@ -351,6 +351,7 @@ impl GreeRemoteApp {
                 TrayAction::ToggleWindow => {
                     self.window_visible = !self.window_visible;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Visible(self.window_visible));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(!self.window_visible));
                     if self.window_visible {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
                     }
@@ -487,6 +488,7 @@ impl eframe::App for GreeRemoteApp {
         {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
             self.window_visible = false;
             self.sync_tray();
             return;
