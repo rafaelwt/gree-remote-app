@@ -8,7 +8,7 @@
   <img alt="License" src="https://img.shields.io/github/license/rafaelwt/gree-remote-app">
   <img alt="Release" src="https://img.shields.io/github/v/release/rafaelwt/gree-remote-app">
   <img alt="Last Commit" src="https://img.shields.io/github/last-commit/rafaelwt/gree-remote-app">
-  <img alt="Rust" src="https://img.shields.io/badge/Rust-2024-000000?logo=rust&logoColor=white">
+  <img alt="Rust" src="https://img.shields.io/badge/Rust-1.99-000000?logo=rust&logoColor=white">
   <img alt="egui" src="https://img.shields.io/badge/egui-0.31-2B7BB9">
   <img alt="Platform" src="https://img.shields.io/badge/Platform-Linux%20%7C%20Windows%20%7C%20macOS-1F2937">
 </p>
